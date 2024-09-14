@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
-Import yfinance as yf
+import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
 

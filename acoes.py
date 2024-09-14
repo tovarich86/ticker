@@ -88,7 +88,7 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     return dados_finais
 
 # Interface do Streamlit
-st.title('Consulta de Dados de Ações e Dividendos')
+st.title('Consulta dados históricos de Ações e Dividendos')
 
 # Entrada do usuário
 tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")

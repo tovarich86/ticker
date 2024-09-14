@@ -1213,7 +1213,7 @@ if st.button('Buscar Dados'):
             st.warning("Nenhum dado de ações encontrado para os tickers e período especificados.")
     else:
         st.error("Por favor, preencha todos os campos.")
-        st.markdown("""
+st.markdown("""
 ---
 **Fonte dos dados:**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)

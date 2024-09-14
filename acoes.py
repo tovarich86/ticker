@@ -5,121 +5,7 @@ import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-# Função para validar a data de entrada
-def validar_data(data):
-    try:
-        return pd.to_datetime(datetime.strptime(data, '%d/%m/%Y').date())
-    except ValueError:
-        raise ValueError("Formato de data incorreto, deve ser DD/MM/AAAA")
-
-# Função para buscar nome de pregão usando a API da B3
-def get_trading_name(ticker, empresas):
-    for empresa in empresas:
-        if empresa['Ticker'] == ticker:
-            return empresa['Nome de Pregão']
-    raise ValueError('Ticker não encontrado.')
-
-# Função para buscar dividendos usando a API da B3
-def buscar_dividendos_b3(ticker, empresas):
-    try:
-        trading_name = get_trading_name(ticker, empresas)
-        params = {
-            "language": "pt-br",
-            "pageNumber": "1",
-            "pageSize": "120",
-            "tradingName": trading_name,
-        }
-        params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
-        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
-        response = requests.get(url)
-        response.raise_for_status()  # Levanta um erro para status de resposta não bem-sucedidos
-        response_json = response.json()
-
-        if 'results' not in response_json:
-            raise ValueError('A chave "results" não está presente na resposta.')
-
-        dividends_data = response_json['results']
-        df = pd.DataFrame(dividends_data)
-        df['Ticker'] = ticker  # Adiciona o Ticker como uma nova coluna
-
-        # Reordenando as colunas para que 'Ticker' seja a primeira
-        if 'Ticker' in df.columns:
-            cols = ['Ticker'] + [col for col in df if col != 'Ticker']
-            df = df[cols]
-
-        return df
-    except Exception as e:
-        st.error(f"Erro ao buscar dividendos para o ticker {ticker}: {e}")
-        return pd.DataFrame()
-
-# Função para buscar dados das ações usando yfinance
-def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    # Convertendo as datas para o formato esperado pelo yfinance
-    data_inicio = validar_data(data_inicio_input).strftime("%Y-%m-%d")
-    data_fim = validar_data(data_fim_input).strftime("%Y-%m-%d")
-
-    # Ajustando a data final para incluir o dia especificado
-    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # Processando os tickers
-    tickers = [ticker.strip() + '.SA' if not ticker.endswith('.SA') and ticker != '^BVSP' else ticker.strip() for ticker in tickers_input.split(",")]
-
-    dados_finais = pd.DataFrame()  # DataFrame final para acumular os resultados
-
-    for ticker in tickers:
-        try:
-            # Baixando os dados de um único ticker
-            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
-            if not dados.empty:
-                dados['Ticker'] = ticker  # Adicionando uma coluna para o ticker
-                dados.reset_index(inplace=True)  # Transformando o índice de datas em uma coluna
-                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  # Ajustando o formato da data
-
-                # Adicionando ao DataFrame final
-                dados_finais = pd.concat([dados_finais, dados])
-        except Exception as e:
-            st.error(f"Erro ao buscar dados para o ticker {ticker}: {e}")
-            continue
-
-    if not dados_finais.empty:
-        # Reordenando as colunas
-        cols = ['Ticker'] + [col for col in dados_finais.columns if col != 'Ticker']
-        dados_finais = dados_finais[cols]
-
-    return dados_finais
-
-# Função para download do Excel
-def exportar_para_excel(dados_acoes, dados_dividendos=None):
-    # Limitar o comprimento do nome do arquivo para evitar quebras
-    max_filename_length = 50
-    tickers_str = "_".join(ticker.strip() for ticker in tickers_input.split(","))
-    if len(tickers_str) > max_filename_length:
-        tickers_str = tickers_str[:max_filename_length] + "_etc"
-
-    nome_arquivo = f"dados_acoes_dividendos_{tickers_str}.xlsx"
-
-    with pd.ExcelWriter(nome_arquivo) as writer:
-        dados_acoes.to_excel(writer, sheet_name='Ações', index=False)
-        if dados_dividendos is not None:
-            dados_dividendos.to_excel(writer, sheet_name='Dividendos', index=False)
-
-    with open(nome_arquivo, 'rb') as file:
-        st.download_button(label="Baixar arquivo Excel", data=file, file_name=nome_arquivo)
-
-# Interface do Streamlit
-st.title('Consulta de Dados de Ações e Dividendos')
-
-# Entrada do usuário
-tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
-data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
-data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
-buscar_dividendos = st.checkbox("Deseja buscar os dividendos no período?")
-
-# Botão para buscar dados
-if st.button('Buscar Dados'):
-    if tickers_input and data_inicio_input and data_fim_input:
-        # Simulação de lista de empresas para o exemplo
-        empresas = [{'Nome de Pregão': '3R PETROLEUM',
+empresas = [{'Nome de Pregão': '3R PETROLEUM',
   'Ticker': 'RRRP3',
   'CompanyName': '3R PETROLEUM ÓLEO E GÁS S.A'},
  {'Nome de Pregão': '524 PARTICIP',
@@ -1192,7 +1078,126 @@ if st.button('Buscar Dados'):
   'CompanyName': 'YDUQS PARTICIPACOES S.A.'},
  {'Nome de Pregão': 'ZAMP S.A.',
   'Ticker': 'ZAMP3',
-  'CompanyName': 'ZAMP S.A.'}]  # Continue usando a lista de exemplo de empresas conforme sua necessidade
+  'CompanyName': 'ZAMP S.A.'}] 
+
+# Função para validar a data de entrada
+def validar_data(data):
+    try:
+        return pd.to_datetime(datetime.strptime(data, '%d/%m/%Y').date())
+    except ValueError:
+        raise ValueError("Formato de data incorreto, deve ser DD/MM/AAAA")
+
+# Função para buscar nome de pregão usando a API da B3
+def get_trading_name(ticker, empresas):
+    for empresa in empresas:
+        if empresa['Ticker'] == ticker:
+            return empresa['Nome de Pregão']
+    raise ValueError('Ticker não encontrado.')
+
+# Função para buscar dividendos usando a API da B3
+def buscar_dividendos_b3(ticker, empresas):
+    try:
+        trading_name = get_trading_name(ticker, empresas)
+        params = {
+            "language": "pt-br",
+            "pageNumber": "1",
+            "pageSize": "120",
+            "tradingName": trading_name,
+        }
+        params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
+        response = requests.get(url)
+        response.raise_for_status()  # Levanta um erro para status de resposta não bem-sucedidos
+        response_json = response.json()
+
+        if 'results' not in response_json:
+            raise ValueError('A chave "results" não está presente na resposta.')
+
+        dividends_data = response_json['results']
+        df = pd.DataFrame(dividends_data)
+        df['Ticker'] = ticker  # Adiciona o Ticker como uma nova coluna
+
+        # Reordenando as colunas para que 'Ticker' seja a primeira
+        if 'Ticker' in df.columns:
+            cols = ['Ticker'] + [col for col in df if col != 'Ticker']
+            df = df[cols]
+
+        return df
+    except Exception as e:
+        st.error(f"Erro ao buscar dividendos para o ticker {ticker}: {e}")
+        return pd.DataFrame()
+
+# Função para buscar dados das ações usando yfinance
+def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
+    # Convertendo as datas para o formato esperado pelo yfinance
+    data_inicio = validar_data(data_inicio_input).strftime("%Y-%m-%d")
+    data_fim = validar_data(data_fim_input).strftime("%Y-%m-%d")
+
+    # Ajustando a data final para incluir o dia especificado
+    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Processando os tickers
+    tickers = [ticker.strip() + '.SA' if not ticker.endswith('.SA') and ticker != '^BVSP' else ticker.strip() for ticker in tickers_input.split(",")]
+
+    dados_finais = pd.DataFrame()  # DataFrame final para acumular os resultados
+
+    for ticker in tickers:
+        try:
+            # Baixando os dados de um único ticker
+            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
+            if not dados.empty:
+                dados['Ticker'] = ticker  # Adicionando uma coluna para o ticker
+                dados.reset_index(inplace=True)  # Transformando o índice de datas em uma coluna
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  # Ajustando o formato da data
+
+                # Adicionando ao DataFrame final
+                dados_finais = pd.concat([dados_finais, dados])
+        except Exception as e:
+            st.error(f"Erro ao buscar dados para o ticker {ticker}: {e}")
+            continue
+
+    if not dados_finais.empty:
+        # Reordenando as colunas
+        cols = ['Ticker'] + [col for col in dados_finais.columns if col != 'Ticker']
+        dados_finais = dados_finais[cols]
+
+    return dados_finais
+
+# Função para download do Excel
+def exportar_para_excel(dados_acoes, dados_dividendos=None):
+    # Limitar o comprimento do nome do arquivo para evitar quebras
+    max_filename_length = 50
+    tickers_str = "_".join(ticker.strip() for ticker in tickers_input.split(","))
+    if len(tickers_str) > max_filename_length:
+        tickers_str = tickers_str[:max_filename_length] + "_etc"
+
+    nome_arquivo = f"dados_acoes_dividendos_{tickers_str}.xlsx"
+
+    with pd.ExcelWriter(nome_arquivo) as writer:
+        dados_acoes.to_excel(writer, sheet_name='Ações', index=False)
+        if dados_dividendos is not None:
+            dados_dividendos.to_excel(writer, sheet_name='Dividendos', index=False)
+
+    with open(nome_arquivo, 'rb') as file:
+        st.download_button(label="Baixar arquivo Excel", data=file, file_name=nome_arquivo)
+
+# Interface do Streamlit
+st.title('Consulta dados históricos de Ações e Dividendos')
+st.markdown("""
+**Nota**: Os dados apresentados nesta aplicação são obtidos através do Yahoo Finance para informações de ações e da API da B3 para informações de dividendos.
+""")
+
+# Entrada do usuário
+tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3):")
+data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
+data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
+buscar_dividendos = st.checkbox("Deseja buscar os dividendos no período?")
+
+# Botão para buscar dados
+if st.button('Buscar Dados'):
+    if tickers_input and data_inicio_input and data_fim_input:
+        # Simulação de lista de empresas para o exemplo
+         # Continue usando a lista de exemplo de empresas conforme sua necessidade
 
         dados_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
         

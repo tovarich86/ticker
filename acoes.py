@@ -5,8 +5,6 @@ import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
 
-
-
 # Função para validar a data de entrada
 def validar_data(data):
     try:
@@ -34,7 +32,6 @@ def buscar_dividendos_b3(ticker, empresas):
         params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
         response = requests.get(url)
-        response.raise_for_status()  # Levanta um erro para status de resposta não bem-sucedidos
         response_json = response.json()
 
         if 'results' not in response_json:
@@ -57,8 +54,8 @@ def buscar_dividendos_b3(ticker, empresas):
 # Função para buscar dados das ações usando yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     # Convertendo as datas para o formato esperado pelo yfinance
-    data_inicio = validar_data(data_inicio_input).strftime("%Y-%m-%d")
-    data_fim = validar_data(data_fim_input).strftime("%Y-%m-%d")
+    data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
 
     # Ajustando a data final para incluir o dia especificado
     data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -90,51 +87,20 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 
     return dados_finais
 
-# Função para download do Excel
-def exportar_para_excel(dados_acoes, dados_dividendos=None):
-    # Limitar o comprimento do nome do arquivo para evitar quebras
-    max_filename_length = 50
-    tickers_str = "_".join(ticker.strip() for ticker in tickers_input.split(","))
-    if len(tickers_str) > max_filename_length:
-        tickers_str = tickers_str[:max_filename_length] + "_etc"
-
-    nome_arquivo = f"dados_acoes_dividendos_{tickers_str}.xlsx"
-
-    with pd.ExcelWriter(nome_arquivo) as writer:
-        dados_acoes.to_excel(writer, sheet_name='Ações', index=False)
-        if dados_dividendos is not None:
-            dados_dividendos.to_excel(writer, sheet_name='Dividendos', index=False)
-
-    with open(nome_arquivo, 'rb') as file:
-        st.download_button(label="Baixar arquivo Excel", data=file, file_name=nome_arquivo)
-
 # Interface do Streamlit
-st.title('Consulta dados históricos de Ações e Dividendos')
-st.markdown("""
-**Nota**: Os dados apresentados nesta aplicação são obtidos através do Yahoo Finance para informações de ações e da API da B3 para informações de dividendos.
-""")
+st.title('Consulta de Dados de Ações e Dividendos')
 
 # Entrada do usuário
-tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3):")
+tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
 data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
 data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
-buscar_dividendos = st.checkbox("Deseja buscar os dividendos no período?")
+buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
 
 # Botão para buscar dados
 if st.button('Buscar Dados'):
     if tickers_input and data_inicio_input and data_fim_input:
         # Simulação de lista de empresas para o exemplo
-         # Continue usando a lista de exemplo de empresas conforme sua necessidade
-
-        dados_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
-        
-        if not dados_acoes.empty:
-            st.write("### Dados de Ações:")
-            st.dataframe(dados_acoes)
-
-            # Buscar dividendos, se o usuário escolher
-            dados_dividendos = None
-            empresas = [{'Nome de Pregão': '3R PETROLEUM',
+        empresas = empresas = [{'Nome de Pregão': '3R PETROLEUM',
   'Ticker': 'RRRP3',
   'CompanyName': '3R PETROLEUM ÓLEO E GÁS S.A'},
  {'Nome de Pregão': '524 PARTICIP',
@@ -1207,7 +1173,15 @@ if st.button('Buscar Dados'):
   'CompanyName': 'YDUQS PARTICIPACOES S.A.'},
  {'Nome de Pregão': 'ZAMP S.A.',
   'Ticker': 'ZAMP3',
-  'CompanyName': 'ZAMP S.A.'}] 
+  'CompanyName': 'ZAMP S.A.'}]  # Exemplo, adapte conforme sua necessidade
+
+        dados_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
+        
+        if not dados_acoes.empty:
+            st.write("### Dados de Ações:")
+            st.dataframe(dados_acoes)
+
+            # Buscar dividendos, se o usuário escolher
             if buscar_dividendos:
                 dividendos_results = []
                 for ticker in tickers_input.split(','):
@@ -1215,9 +1189,9 @@ if st.button('Buscar Dados'):
                     df_dividendos = buscar_dividendos_b3(ticker, empresas)
                     if not df_dividendos.empty:
                         # Filtrando dividendos por data
-                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], format='%d/%m/%Y', errors='coerce')
-                        df_dividendos = df_dividendos[(df_dividendos['dateApproval'] >= validar_data(data_inicio_input)) & 
-                                                      (df_dividendos['dateApproval'] <= validar_data(data_fim_input))]
+                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'])
+                        df_dividendos = df_dividendos[(df_dividendos['dateApproval'] >= pd.to_datetime(data_inicio_input)) & 
+                                                      (df_dividendos['dateApproval'] <= pd.to_datetime(data_fim_input))]
                         dividendos_results.append(df_dividendos)
                 
                 if dividendos_results:
@@ -1228,9 +1202,20 @@ if st.button('Buscar Dados'):
                     st.warning("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
 
             # Opção para download do Excel
-            exportar_para_excel(dados_acoes, dados_dividendos)
+            nome_arquivo = f"dados_acoes_dividendos_{tickers_input.replace(',', '_').replace(' ', '')}.xlsx"
+            with pd.ExcelWriter(nome_arquivo) as writer:
+                dados_acoes.to_excel(writer, sheet_name='Ações', index=False)
+                if buscar_dividendos and dividendos_results:
+                    dados_dividendos.to_excel(writer, sheet_name='Dividendos', index=False)
+            with open(nome_arquivo, 'rb') as file:
+                st.download_button(label="Baixar arquivo Excel", data=file, file_name=nome_arquivo)
         else:
             st.warning("Nenhum dado de ações encontrado para os tickers e período especificados.")
     else:
         st.error("Por favor, preencha todos os campos.")
-
+        st.markdown("""
+---
+**Fonte dos dados:**
+- Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
+- Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
+""")

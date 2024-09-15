@@ -1199,7 +1199,7 @@ if st.button('Buscar Dados'):
                     st.write("### Dados de Dividendos:")
                     st.dataframe(dados_dividendos)
                 else:
-                    st.warning("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
+                    st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
 
             # Opção para download do Excel
             nome_arquivo = f"dados_acoes_dividendos_{tickers_input.replace(',', '_').replace(' ', '')}.xlsx"
@@ -1210,7 +1210,7 @@ if st.button('Buscar Dados'):
             with open(nome_arquivo, 'rb') as file:
                 st.download_button(label="Baixar arquivo Excel", data=file, file_name=nome_arquivo)
         else:
-            st.warning("Nenhum dado de ações encontrado para os tickers e período especificados.")
+            st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
     else:
         st.error("Por favor, preencha todos os campos.")
 st.markdown("""

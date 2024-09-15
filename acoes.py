@@ -48,7 +48,7 @@ def buscar_dividendos_b3(ticker, empresas):
 
         return df
     except Exception as e:
-        st.error(f"Erro ao buscar dividendos para o ticker {ticker}: {e}")
+        st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
         return pd.DataFrame()
 
 # Função para buscar dados das ações usando yfinance
@@ -77,7 +77,7 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
                 # Adicionando ao DataFrame final
                 dados_finais = pd.concat([dados_finais, dados])
         except Exception as e:
-            st.error(f"Erro ao buscar dados para o ticker {ticker}: {e}")
+            st.info(f"Dados não encontrados para o  ticker {ticker}: {e}")
             continue
 
     if not dados_finais.empty:

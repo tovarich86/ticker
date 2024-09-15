@@ -10,15 +10,9 @@ Download de Resultados: Possibilidade de baixar os dados de ações e dividendos
 Interface Amigável: Construído com Streamlit, oferece uma interface intuitiva e fácil de usar.
 
 📄 Uso
+
 Abra o aplicativo em seu navegador.
 Digite os tickers das ações que deseja buscar, separados por vírgula (ex: PETR4, VALE3, ABEV3).
 Informe a data de início e de fim para a busca de dados.
 Opte por buscar ou não os dividendos no período selecionado.
 Clique em "Buscar Dados" para visualizar os resultados e fazer o download do Excel.
-📚 Requisitos
-Python 3.7 ou superior
-Pacotes Python listados em requirements.txt
-Conexão com a internet para buscar dados
-📝 Contribuição
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues, enviar pull requests ou sugerir novas funcionalidades.
-

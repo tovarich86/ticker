@@ -1,7 +1,9 @@
  Ticker Data App
+ 
 Este é um aplicativo web desenvolvido em Python usando Streamlit que permite buscar dados de ações e dividendos de múltiplos tickers simultaneamente. O aplicativo é ideal para quem trabalha com Investimento de Longo Prazo (ILP) e precisa mensurar TSR (Total Shareholder Return) de forma rápida e eficiente.
 
- Funcionalidades
+Funcionalidades
+
 Busca de Dados de Ações: Permite buscar dados históricos de ações de múltiplos tickers de uma só vez, usando a biblioteca yfinance.
 Busca de Dividendos: Integração com a API da B3 para buscar dados de dividendos de ações listadas.
 Download de Resultados: Possibilidade de baixar os dados de ações e dividendos em um arquivo Excel consolidado.

@@ -1202,7 +1202,7 @@ if st.button('Buscar Dados'):
                     st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
 
             # Opção para download do Excel
-            nome_arquivo = f"dados_acoes_dividendos_{tickers_input.replace(',', '_').replace(' ', '')}.xlsx"
+            nome_arquivo = f"dados_acoes_dividendos_.xlsx"
             with pd.ExcelWriter(nome_arquivo) as writer:
                 dados_acoes.to_excel(writer, sheet_name='Ações', index=False)
                 if buscar_dividendos and dividendos_results:

@@ -36,9 +36,12 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
             # Baixando os dados de um único ticker
             dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
             
-            # Verificar se os dados estão vazios
             if not dados.empty:
-                dados['Ticker'] = ticker  # Adicionando uma coluna para o ticker
+                # Flatten do MultiIndex para evitar erros
+                dados.columns = ['_'.join(col).strip() if isinstance(col, tuple) else col for col in dados.columns]
+                
+                # Adicionando o ticker como coluna
+                dados['Ticker'] = ticker
                 dados.reset_index(inplace=True)  # Transformando o índice de datas em uma coluna
                 dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  # Ajustando o formato da data
                 

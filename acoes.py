@@ -20,70 +20,34 @@ def get_trading_name(ticker, empresas):
     raise ValueError('Ticker não encontrado.')
 
 # Função para buscar dividendos usando a API da B3
-def buscar_dividendos_b3(ticker, empresas):
-    try:
-        trading_name = get_trading_name(ticker, empresas)
-        params = {
-            "language": "pt-br",
-            "pageNumber": "1",
-            "pageSize": "120",
-            "tradingName": trading_name,
-        }
-        params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
-        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
-        response = requests.get(url)
-        response_json = response.json()
-
-        if 'results' not in response_json:
-            raise ValueError('A chave "results" não está presente na resposta.')
-
-        dividends_data = response_json['results']
-        df = pd.DataFrame(dividends_data)
-        df['Ticker'] = ticker  # Adiciona o Ticker como uma nova coluna
-
-        # Reordenando as colunas para que 'Ticker' seja a primeira
-        if 'Ticker' in df.columns:
-            cols = ['Ticker'] + [col for col in df if col != 'Ticker']
-            df = df[cols]
-
-        return df
-    except Exception as e:
-        st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
-        return pd.DataFrame()
-
-# Função para buscar dados das ações usando yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    # Convertendo as datas para o formato esperado pelo yfinance
     data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
     data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-
-    # Ajustando a data final para incluir o dia especificado
     data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Processando os tickers
-    tickers = [ticker.strip() + '.SA' if not ticker.endswith('.SA') and ticker != '^BVSP' else ticker.strip() for ticker in tickers_input.split(",")]
+    tickers = [ticker.strip() + '.SA' if not ticker.strip().endswith('.SA') and ticker.strip() != '^BVSP' else ticker.strip() for ticker in tickers_input.split(",")]
 
-    dados_finais = pd.DataFrame()  # DataFrame final para acumular os resultados
+    dados_finais = pd.DataFrame()
 
     for ticker in tickers:
         try:
-            # Baixando os dados de um único ticker
             dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
             if not dados.empty:
-                dados['Ticker'] = ticker  # Adicionando uma coluna para o ticker
-                dados.reset_index(inplace=True)  # Transformando o índice de datas em uma coluna
-                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  # Ajustando o formato da data
-
-                # Adicionando ao DataFrame final
+                dados['Ticker'] = ticker
+                dados.reset_index(inplace=True)
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
                 dados_finais = pd.concat([dados_finais, dados])
+            else:
+                st.info(f"Sem dados para o ticker {ticker}")
         except Exception as e:
-            st.info(f"Dados não encontrados para o  ticker {ticker}: {e}")
+            st.info(f"Erro ao buscar dados para {ticker}: {e}")
             continue
 
-    if not dados_finais.empty:
-        # Reordenando as colunas
+    if not dados_finais.empty and 'Ticker' in dados_finais.columns:
         cols = ['Ticker'] + [col for col in dados_finais.columns if col != 'Ticker']
         dados_finais = dados_finais[cols]
+    else:
+        st.error("Nenhum dado encontrado ou a coluna 'Ticker' está ausente.")
 
     return dados_finais
 

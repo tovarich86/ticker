@@ -64,7 +64,37 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
         st.info("Nenhum dado encontrado para os tickers especificados.")
 
     return dados_finais
+# Definição da função buscar_dividendos_b3
+def buscar_dividendos_b3(ticker, empresas):
+    try:
+        trading_name = get_trading_name(ticker, empresas)
+        params = {
+            "language": "pt-br",
+            "pageNumber": "1",
+            "pageSize": "120",
+            "tradingName": trading_name,
+        }
+        params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
+        response = requests.get(url)
+        response_json = response.json()
 
+        if 'results' not in response_json:
+            raise ValueError('A chave "results" não está presente na resposta.')
+
+        dividends_data = response_json['results']
+        df = pd.DataFrame(dividends_data)
+        df['Ticker'] = ticker  # Adiciona o Ticker como uma nova coluna
+
+        # Reordenando as colunas para que 'Ticker' seja a primeira
+        if 'Ticker' in df.columns:
+            cols = ['Ticker'] + [col for col in df if col != 'Ticker']
+            df = df[cols]
+
+        return df
+    except Exception as e:
+        st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
+        return pd.DataFrame()
 
 # Interface do Streamlit
 st.title('Consulta dados históricos de Ações e Dividendos')

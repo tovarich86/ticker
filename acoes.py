@@ -21,21 +21,28 @@ def get_trading_name(ticker, empresas):
 
 # Função para buscar dividendos usando a API da B3
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
+    # Convertendo as datas para o formato esperado pelo yfinance
     data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
     data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
     data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # Processando os tickers
     tickers = [ticker.strip() + '.SA' if not ticker.strip().endswith('.SA') and ticker.strip() != '^BVSP' else ticker.strip() for ticker in tickers_input.split(",")]
 
-    dados_finais = pd.DataFrame()
+    dados_finais = pd.DataFrame()  # DataFrame final para acumular os resultados
 
     for ticker in tickers:
         try:
+            # Baixando os dados de um único ticker
             dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
+            
+            # Verificar se os dados estão vazios
             if not dados.empty:
-                dados['Ticker'] = ticker
-                dados.reset_index(inplace=True)
-                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
+                dados['Ticker'] = ticker  # Adicionando uma coluna para o ticker
+                dados.reset_index(inplace=True)  # Transformando o índice de datas em uma coluna
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  # Ajustando o formato da data
+                
+                # Adicionando ao DataFrame final
                 dados_finais = pd.concat([dados_finais, dados])
             else:
                 st.info(f"Sem dados para o ticker {ticker}")
@@ -43,13 +50,18 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
             st.info(f"Erro ao buscar dados para {ticker}: {e}")
             continue
 
-    if not dados_finais.empty and 'Ticker' in dados_finais.columns:
-        cols = ['Ticker'] + [col for col in dados_finais.columns if col != 'Ticker']
-        dados_finais = dados_finais[cols]
+    # Reordenar as colunas, se a coluna 'Ticker' existir
+    if not dados_finais.empty:
+        if 'Ticker' in dados_finais.columns:
+            cols = ['Ticker'] + [col for col in dados_finais.columns if col != 'Ticker']
+            dados_finais = dados_finais[cols]
+        else:
+            st.error("A coluna 'Ticker' está ausente no DataFrame final.")
     else:
-        st.error("Nenhum dado encontrado ou a coluna 'Ticker' está ausente.")
+        st.info("Nenhum dado encontrado para os tickers especificados.")
 
     return dados_finais
+
 
 # Interface do Streamlit
 st.title('Consulta dados históricos de Ações e Dividendos')

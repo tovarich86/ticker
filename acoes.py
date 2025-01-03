@@ -1219,7 +1219,7 @@ if st.button('Buscar Dados'):
                     df_dividendos = buscar_dividendos_b3(ticker, empresas)
                     if not df_dividendos.empty:
                         # Filtrando dividendos por data
-                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'])
+                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], errors='coerce')
                         data_ini = pd.to_datetime(data_inicio_input, format='%d/%m/%Y')
                         data_fim = pd.to_datetime(data_fim_input, format='%d/%m/%Y')
                         df_dividendos = df_dividendos[

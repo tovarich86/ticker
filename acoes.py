@@ -78,7 +78,7 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 
     for ticker in tickers:
         try:
-            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
+            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
 
             if not dados.empty:
                 # Flatten do MultiIndex para evitar erros

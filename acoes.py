@@ -20,52 +20,11 @@ def get_trading_name(ticker, empresas):
     raise ValueError('Ticker não encontrado.')
 
 # Função para buscar dividendos usando a API da B3
-def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    # Convertendo as datas para o formato esperado pelo yfinance
-    data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-    data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # Processando os tickers
-    tickers = [ticker.strip() + '.SA' if not ticker.strip().endswith('.SA') and ticker.strip() != '^BVSP' else ticker.strip() for ticker in tickers_input.split(",")]
-
-    dados_finais = pd.DataFrame()  # DataFrame final para acumular os resultados
-
-    for ticker in tickers:
-        try:
-            # Baixando os dados de um único ticker
-            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
-            
-            if not dados.empty:
-                # Flatten do MultiIndex para evitar erros
-                dados.columns = ['_'.join(col).strip() if isinstance(col, tuple) else col for col in dados.columns]
-                
-                # Adicionando o ticker como coluna
-                dados['Ticker'] = ticker
-                dados.reset_index(inplace=True)  # Transformando o índice de datas em uma coluna
-                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  # Ajustando o formato da data
-                
-                # Adicionando ao DataFrame final
-                dados_finais = pd.concat([dados_finais, dados])
-            else:
-                st.info(f"Sem dados para o ticker {ticker}")
-        except Exception as e:
-            st.info(f"Erro ao buscar dados para {ticker}: {e}")
-            continue
-
-    # Reordenar as colunas, se a coluna 'Ticker' existir
-    if not dados_finais.empty:
-        if 'Ticker' in dados_finais.columns:
-            cols = ['Ticker'] + [col for col in dados_finais.columns if col != 'Ticker']
-            dados_finais = dados_finais[cols]
-        else:
-            st.error("A coluna 'Ticker' está ausente no DataFrame final.")
-    else:
-        st.info("Nenhum dado encontrado para os tickers especificados.")
-
-    return dados_finais
-# Definição da função buscar_dividendos_b3
 def buscar_dividendos_b3(ticker, empresas):
+    """
+    Retorna um DataFrame com dividendos do ticker em questão.
+    Se não encontrar dividendos ou ocorrer erro, retorna DataFrame vazio.
+    """
     try:
         trading_name = get_trading_name(ticker, empresas)
         params = {
@@ -95,6 +54,54 @@ def buscar_dividendos_b3(ticker, empresas):
     except Exception as e:
         st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
         return pd.DataFrame()
+
+# Função para buscar dados históricos de ações via yfinance
+def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
+    """
+    Retorna dois dicionários:
+      - dados_acoes_dict[ticker] = DataFrame com dados de cada ticker
+      - erros (para logar e mostrar em st.info, se houver)
+    """
+    data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Ajustando o sufixo .SA para tickers que não sejam ^BVSP
+    tickers = [
+        ticker.strip() + '.SA' if not ticker.strip().endswith('.SA') and ticker.strip() != '^BVSP' 
+        else ticker.strip()
+        for ticker in tickers_input.split(",")
+    ]
+
+    dados_acoes_dict = {}
+    erros = []
+
+    for ticker in tickers:
+        try:
+            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada)
+
+            if not dados.empty:
+                # Flatten do MultiIndex para evitar erros
+                dados.columns = [
+                    '_'.join(col).strip() if isinstance(col, tuple) else col 
+                    for col in dados.columns
+                ]
+                # Adicionando o ticker como coluna
+                dados['Ticker'] = ticker
+                # Transformando o índice de datas em uma coluna
+                dados.reset_index(inplace=True) 
+                # Ajustando o formato da data
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  
+
+                # Armazenar este DataFrame no dicionário
+                dados_acoes_dict[ticker] = dados
+            else:
+                erros.append(f"Sem dados para o ticker {ticker}")
+        except Exception as e:
+            erros.append(f"Erro ao buscar dados para {ticker}: {e}")
+            continue
+
+    return dados_acoes_dict, erros
 
 # Interface do Streamlit
 st.title('Consulta dados históricos de Ações e Dividendos')
@@ -1184,44 +1191,80 @@ if st.button('Buscar Dados'):
   'Ticker': 'ZAMP3',
   'CompanyName': 'ZAMP S.A.'}]  # Exemplo, adapte conforme sua necessidade
 
-        dados_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
-        
-        if not dados_acoes.empty:
-            st.write("### Dados de Ações:")
-            st.dataframe(dados_acoes)
+        # Buscar dados de ações (cada ticker num DF separado)
+        dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
 
-            # Buscar dividendos, se o usuário escolher
+        # Exibir na tela possíveis erros
+        for erro in erros:
+            st.info(erro)
+
+        # Caso não encontre dados de nenhum ticker
+        if not dados_acoes_dict:
+            st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
+        else:
+            st.write("### Dados de Ações por Ticker:")
+
+            # Mostrar cada DataFrame de ação individualmente no Streamlit
+            for ticker, df_acao in dados_acoes_dict.items():
+                st.write(f"#### {ticker}")
+                st.dataframe(df_acao)
+
+            # -----------------------
+            # DIVIDENDOS (opcional) 
+            # -----------------------
+            dados_dividendos_dict = {}
             if buscar_dividendos:
-                dividendos_results = []
                 for ticker in tickers_input.split(','):
                     ticker = ticker.strip()
                     df_dividendos = buscar_dividendos_b3(ticker, empresas)
                     if not df_dividendos.empty:
                         # Filtrando dividendos por data
                         df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'])
-                        df_dividendos = df_dividendos[(df_dividendos['dateApproval'] >= pd.to_datetime(data_inicio_input)) & 
-                                                      (df_dividendos['dateApproval'] <= pd.to_datetime(data_fim_input))]
-                        dividendos_results.append(df_dividendos)
-                
-                if dividendos_results:
-                    dados_dividendos = pd.concat(dividendos_results, ignore_index=True)
-                    st.write("### Dados de Dividendos:")
-                    st.dataframe(dados_dividendos)
+                        data_ini = pd.to_datetime(data_inicio_input, format='%d/%m/%Y')
+                        data_fim = pd.to_datetime(data_fim_input, format='%d/%m/%Y')
+                        df_dividendos = df_dividendos[
+                            (df_dividendos['dateApproval'] >= data_ini) & 
+                            (df_dividendos['dateApproval'] <= data_fim)
+                        ]
+                        if not df_dividendos.empty:
+                            dados_dividendos_dict[ticker] = df_dividendos
+
+                if dados_dividendos_dict:
+                    st.write("### Dados de Dividendos por Ticker:")
+                    for ticker, df_divid in dados_dividendos_dict.items():
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_divid)
                 else:
                     st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
 
-            # Opção para download do Excel
-            nome_arquivo = f"dados_acoes_dividendos_.xlsx"
+            # ------------------------------------------------
+            # GERAR EXCEL: cada ticker em uma aba diferente
+            # ------------------------------------------------
+            nome_arquivo = "dados_acoes_dividendos_.xlsx"
             with pd.ExcelWriter(nome_arquivo) as writer:
-                dados_acoes.to_excel(writer, sheet_name='Ações', index=False)
-                if buscar_dividendos and dividendos_results:
-                    dados_dividendos.to_excel(writer, sheet_name='Dividendos', index=False)
+                # 1) Gravar dados de ações (cada ticker em uma aba)
+                for ticker, df_acao in dados_acoes_dict.items():
+                    # sheet_name não pode ter mais de 31 caracteres no Excel,
+                    # então podemos truncar ou simplesmente usar o ticker
+                    sheet_name = f"Acoes_{ticker[:25]}"
+                    df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                # 2) Se houver dados de dividendos, gravar por ticker também
+                if buscar_dividendos and dados_dividendos_dict:
+                    for ticker, df_divid in dados_dividendos_dict.items():
+                        sheet_name = f"Div_{ticker[:25]}"
+                        df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            # Botão de download do Excel
             with open(nome_arquivo, 'rb') as file:
-                st.download_button(label="Baixar arquivo Excel", data=file, file_name=nome_arquivo)
-        else:
-            st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
+                st.download_button(
+                    label="Baixar arquivo Excel", 
+                    data=file, 
+                    file_name=nome_arquivo
+                )
     else:
         st.error("Por favor, preencha todos os campos.")
+
 st.markdown("""
 ---
 **Fonte dos dados:**

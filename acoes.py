@@ -189,7 +189,7 @@ if st.button('Buscar Dados'):
  {'Nome de Pregão': 'ATOMPAR',
   'Ticker': 'ATOM3',
   'CompanyName': 'ATOM EMPREENDIMENTOS E PARTICIPAÇÕES S.A.'},
- {'Nome de Pregão': 'KLABIN S.A.',
+ {'Nome de Pregão': 'KLABIN SA',
   'Ticker': 'KLBN11',
   'CompanyName': 'KLABIN S.A.'},
  {'Nome de Pregão': 'AUREN',

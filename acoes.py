@@ -68,10 +68,10 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 
     # Ajustando o sufixo .SA para tickers que não sejam ^BVSP
     tickers = [
-        ticker.strip() + '.SA' if not ticker.strip().endswith('.SA') and ticker.strip() != '^BVSP' 
-        else ticker.strip()
-        for ticker in tickers_input.split(",")
-    ]
+    ticker.strip() + '.SA' if any(char.isdigit() for char in ticker.strip()) and not ticker.strip().endswith('.SA')
+    else ticker.strip()
+    for ticker in tickers_input.split(",")
+]
 
     dados_acoes_dict = {}
     erros = []

@@ -1187,18 +1187,26 @@ if st.button('Buscar Dados'):
         # Exportar para Excel
         # Nome do arquivo de saída
 # Nome do arquivo de saída
-# Nome do arquivo de saída
 nome_arquivo = "dados_acoes_dividendos_volatilidade.xlsx"
 
-# Criar flag para verificar se pelo menos uma aba foi adicionada
-tem_dados_para_excel = False  
+tem_dados_para_excel = False  # Flag para verificar se há dados antes de salvar
 
-with pd.ExcelWriter(nome_arquivo) as writer:
+with pd.ExcelWriter(nome_arquivo, engine='openpyxl') as writer:
+    
     # 1️⃣ Gravar dados de ações (se houver)
     if dados_acoes_dict:
         for ticker, df_acao in dados_acoes_dict.items():
-            if not df_acao.empty:  # Evita erro ao gravar DataFrame vazio
+            if not df_acao.empty:
                 tem_dados_para_excel = True
+                
+                # ✅ Corrigir MultiIndex achatando colunas
+                if isinstance(df_acao.columns, pd.MultiIndex):
+                    df_acao.columns = ['_'.join(map(str, col)) for col in df_acao.columns]
+
+                # ✅ Garantir que todas as colunas são strings
+                df_acao.columns = df_acao.columns.astype(str)
+                
+                # ✅ Salvar no Excel
                 sheet_name = f"Acoes_{ticker[:25]}"
                 df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
 
@@ -1207,6 +1215,7 @@ with pd.ExcelWriter(nome_arquivo) as writer:
         for ticker, df_divid in dados_dividendos_dict.items():
             if not df_divid.empty:
                 tem_dados_para_excel = True
+                df_divid.columns = df_divid.columns.astype(str)
                 sheet_name = f"Div_{ticker[:25]}"
                 df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
 
@@ -1220,14 +1229,14 @@ with pd.ExcelWriter(nome_arquivo) as writer:
 
             if df_volatilidade is not None and not df_volatilidade.empty:
                 tem_dados_para_excel = True
+                df_volatilidade.columns = df_volatilidade.columns.astype(str)
                 sheet_name = f"Vol_{ticker[:25]}"
                 df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    # 🚨 Se nenhuma aba foi adicionada, evita criar um arquivo corrompido
+    # 🚨 Se nenhuma aba foi adicionada, evitar erro ao salvar
     if not tem_dados_para_excel:
         st.error("Nenhum dado válido foi encontrado para salvar no Excel.")
     else:
-        # Salvar o Excel apenas se houver dados
         writer.close()
 
         # Botão para baixar o Excel no Streamlit

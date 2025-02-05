@@ -1187,10 +1187,8 @@ if st.button('Buscar Dados'):
         # Exportar para Excel
         # Nome do arquivo de saída
 # Nome do arquivo de saída
+# Nome do arquivo de saída
 nome_arquivo = "dados_acoes_dividendos_volatilidade.xlsx"
-
-# Criar dicionário para armazenar os dados de volatilidade
-dados_volatilidade_dict = {}
 
 # Criar flag para verificar se pelo menos uma aba foi adicionada
 tem_dados_para_excel = False  
@@ -1198,17 +1196,17 @@ tem_dados_para_excel = False
 with pd.ExcelWriter(nome_arquivo) as writer:
     # 1️⃣ Gravar dados de ações (se houver)
     if dados_acoes_dict:
-        tem_dados_para_excel = True
         for ticker, df_acao in dados_acoes_dict.items():
             if not df_acao.empty:  # Evita erro ao gravar DataFrame vazio
+                tem_dados_para_excel = True
                 sheet_name = f"Acoes_{ticker[:25]}"
                 df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
 
     # 2️⃣ Gravar dividendos, se disponíveis
     if buscar_dividendos and dados_dividendos_dict:
-        tem_dados_para_excel = True
         for ticker, df_divid in dados_dividendos_dict.items():
             if not df_divid.empty:
+                tem_dados_para_excel = True
                 sheet_name = f"Div_{ticker[:25]}"
                 df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
 
@@ -1218,20 +1216,20 @@ with pd.ExcelWriter(nome_arquivo) as writer:
             df_ticker = dados_acoes_dict[ticker]
 
             # 🚀 Cálculo de volatilidade
-            try:
-                df_volatilidade = calcular_volatilidade_para_ticker(df_ticker)
-                if df_volatilidade is not None and not df_volatilidade.empty:
-                    tem_dados_para_excel = True
-                    dados_volatilidade_dict[ticker] = df_volatilidade
-                    sheet_name = f"Vol_{ticker[:25]}"
-                    df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
-            except Exception as e:
-                st.error(f"Erro ao calcular volatilidade para {ticker}: {e}")
+            df_volatilidade = calcular_volatilidade_para_ticker(df_ticker)
+
+            if df_volatilidade is not None and not df_volatilidade.empty:
+                tem_dados_para_excel = True
+                sheet_name = f"Vol_{ticker[:25]}"
+                df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
 
     # 🚨 Se nenhuma aba foi adicionada, evita criar um arquivo corrompido
     if not tem_dados_para_excel:
         st.error("Nenhum dado válido foi encontrado para salvar no Excel.")
     else:
+        # Salvar o Excel apenas se houver dados
+        writer.close()
+
         # Botão para baixar o Excel no Streamlit
         with open(nome_arquivo, 'rb') as file:
             st.download_button(
@@ -1239,3 +1237,4 @@ with pd.ExcelWriter(nome_arquivo) as writer:
                 data=file,
                 file_name=nome_arquivo
             )
+

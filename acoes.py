@@ -1161,7 +1161,7 @@ tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PET
 data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
 data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
 buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
-buscar_volatilidade = st.checkbox("Calcular volatilidade histórica e GARCH")
+calcular_volatilidade  = st.checkbox("Calcular volatilidade histórica e GARCH")
 
 # Botão para buscar dados
 if st.button('Buscar Dados'):
@@ -1186,12 +1186,15 @@ if st.button('Buscar Dados'):
         
         # Exportar para Excel
         # Nome do arquivo de saída
+# Nome do arquivo de saída
 nome_arquivo = "dados_acoes_dividendos_volatilidade.xlsx"
+
+# Dicionário para armazenar os dados de volatilidade
+dados_volatilidade_dict = {}
 
 with pd.ExcelWriter(nome_arquivo) as writer:
     # 1️⃣ Gravar dados de ações (cada ticker em uma aba)
     for ticker, df_acao in dados_acoes_dict.items():
-        # sheet_name não pode ter mais de 31 caracteres no Excel
         sheet_name = f"Acoes_{ticker[:25]}"
         
         # 🚨 Corrigir possíveis MultiIndex ou colunas aninhadas
@@ -1207,10 +1210,19 @@ with pd.ExcelWriter(nome_arquivo) as writer:
             df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
 
     # 3️⃣ Gravar os cálculos de volatilidade por ticker
-    if calcular_volatilidade and dados_volatilidade_dict:
-        for ticker, df_volatilidade in dados_volatilidade_dict.items():
-            sheet_name = f"Vol_{ticker[:25]}"
-            df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
+    if calcular_volatilidade:
+        for ticker in dados_acoes_dict.keys():
+            df_ticker = dados_acoes_dict[ticker]
+
+            # 🚀 Cálculo de volatilidade
+            try:
+                df_volatilidade = calcular_volatilidade_para_ticker(df_ticker)
+                if df_volatilidade is not None:
+                    dados_volatilidade_dict[ticker] = df_volatilidade
+                    sheet_name = f"Vol_{ticker[:25]}"
+                    df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
+            except Exception as e:
+                st.error(f"Erro ao calcular volatilidade para {ticker}: {e}")
 
 # Botão para baixar o Excel no Streamlit
 with open(nome_arquivo, 'rb') as file:

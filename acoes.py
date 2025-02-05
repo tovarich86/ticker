@@ -82,10 +82,7 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 
             if not dados.empty:
                 # Flatten do MultiIndex para evitar erros
-                dados.columns = [
-                    '_'.join(col).strip() if isinstance(col, tuple) else col 
-                    for col in dados.columns
-                ]
+                dados.columns = [col[0] if isinstance(col, tuple) else col for col in dados.columns]
                 # Adicionando o ticker como coluna
                 dados['Ticker'] = ticker
                 # Transformando o índice de datas em uma coluna

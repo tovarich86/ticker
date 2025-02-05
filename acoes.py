@@ -1185,20 +1185,37 @@ if st.button('Buscar Dados'):
                     st.dataframe(df_volatilidade)
         
         # Exportar para Excel
-        nome_arquivo = "dados_acoes_volatilidade.xlsx"
-        with pd.ExcelWriter(nome_arquivo) as writer:
-            for ticker, df_acao in dados_acoes_dict.items():
-                df_acao.to_excel(writer, sheet_name=f"Acoes_{ticker[:25]}", index=False)
-                
-                if buscar_volatilidade:
-                    df_volatilidade = calcular_volatilidade(df_acao)
-                    df_volatilidade.to_excel(writer, sheet_name=f"Vol_{ticker[:25]}")
+        # Nome do arquivo de saída
+nome_arquivo = "dados_acoes_dividendos_volatilidade.xlsx"
+
+with pd.ExcelWriter(nome_arquivo) as writer:
+    # 1️⃣ Gravar dados de ações (cada ticker em uma aba)
+    for ticker, df_acao in dados_acoes_dict.items():
+        # sheet_name não pode ter mais de 31 caracteres no Excel
+        sheet_name = f"Acoes_{ticker[:25]}"
         
-        with open(nome_arquivo, 'rb') as file:
-            st.download_button(
-                label="Baixar arquivo Excel", 
-                data=file, 
-                file_name=nome_arquivo
-            )
-    else:
-        st.error("Por favor, preencha todos os campos.")
+        # 🚨 Corrigir possíveis MultiIndex ou colunas aninhadas
+        df_acao = df_acao.reset_index(drop=True)
+        df_acao.columns = [str(col) for col in df_acao.columns]  # Garantir colunas simples
+        
+        df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    # 2️⃣ Gravar dividendos, se disponíveis
+    if buscar_dividendos and dados_dividendos_dict:
+        for ticker, df_divid in dados_dividendos_dict.items():
+            sheet_name = f"Div_{ticker[:25]}"
+            df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    # 3️⃣ Gravar os cálculos de volatilidade por ticker
+    if calcular_volatilidade and dados_volatilidade_dict:
+        for ticker, df_volatilidade in dados_volatilidade_dict.items():
+            sheet_name = f"Vol_{ticker[:25]}"
+            df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
+
+# Botão para baixar o Excel no Streamlit
+with open(nome_arquivo, 'rb') as file:
+    st.download_button(
+        label="Baixar arquivo Excel",
+        data=file,
+        file_name=nome_arquivo
+    )

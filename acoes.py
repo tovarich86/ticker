@@ -4,11 +4,116 @@ import pandas as pd
 import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
-import numpy as np
-from arch import arch_model
 
-# Lista de empresas
-empresas =  [{'Nome de Pregão': '3R PETROLEUM',
+# Função para validar a data de entrada
+def validar_data(data):
+    try:
+        return pd.to_datetime(datetime.strptime(data, '%d/%m/%Y').date())
+    except ValueError:
+        raise ValueError("Formato de data incorreto, deve ser DD/MM/AAAA")
+
+# Função para buscar nome de pregão usando a API da B3
+def get_trading_name(ticker, empresas):
+    for empresa in empresas:
+        if empresa['Ticker'] == ticker:
+            return empresa['Nome de Pregão']
+    raise ValueError('Ticker não encontrado.')
+
+# Função para buscar dividendos usando a API da B3
+def buscar_dividendos_b3(ticker, empresas):
+    """
+    Retorna um DataFrame com dividendos do ticker em questão.
+    Se não encontrar dividendos ou ocorrer erro, retorna DataFrame vazio.
+    """
+    try:
+        trading_name = get_trading_name(ticker, empresas)
+        params = {
+            "language": "pt-br",
+            "pageNumber": "1",
+            "pageSize": "120",
+            "tradingName": trading_name,
+        }
+        params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
+        response = requests.get(url)
+        response_json = response.json()
+
+        if 'results' not in response_json:
+            raise ValueError('A chave "results" não está presente na resposta.')
+
+        dividends_data = response_json['results']
+        df = pd.DataFrame(dividends_data)
+        df['Ticker'] = ticker  # Adiciona o Ticker como uma nova coluna
+
+        # Reordenando as colunas para que 'Ticker' seja a primeira
+        if 'Ticker' in df.columns:
+            cols = ['Ticker'] + [col for col in df if col != 'Ticker']
+            df = df[cols]
+
+        return df
+    except Exception as e:
+        st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
+        return pd.DataFrame()
+
+# Função para buscar dados históricos de ações via yfinance
+def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
+    """
+    Retorna dois dicionários:
+      - dados_acoes_dict[ticker] = DataFrame com dados de cada ticker
+      - erros (para logar e mostrar em st.info, se houver)
+    """
+    data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Ajustando o sufixo .SA para tickers que não sejam ^BVSP
+    tickers = [
+    ticker.strip() + '.SA' if any(char.isdigit() for char in ticker.strip()) and not ticker.strip().endswith('.SA')
+    else ticker.strip()
+    for ticker in tickers_input.split(",")
+]
+
+    dados_acoes_dict = {}
+    erros = []
+
+    for ticker in tickers:
+        try:
+            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
+
+            if not dados.empty:
+                # Flatten do MultiIndex para evitar erros
+                dados.columns = [col[0] if isinstance(col, tuple) else col for col in dados.columns]
+                # Adicionando o ticker como coluna
+                dados['Ticker'] = ticker
+                # Transformando o índice de datas em uma coluna
+                dados.reset_index(inplace=True) 
+                # Ajustando o formato da data
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')  
+
+                # Armazenar este DataFrame no dicionário
+                dados_acoes_dict[ticker] = dados
+            else:
+                erros.append(f"Sem dados para o ticker {ticker}")
+        except Exception as e:
+            erros.append(f"Erro ao buscar dados para {ticker}: {e}")
+            continue
+
+    return dados_acoes_dict, erros
+
+# Interface do Streamlit
+st.title('Consulta dados históricos de Ações e Dividendos')
+
+# Entrada do usuário
+tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
+data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
+data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
+buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
+
+# Botão para buscar dados
+if st.button('Buscar Dados'):
+    if tickers_input and data_inicio_input and data_fim_input:
+        # Simulação de lista de empresas para o exemplo
+        empresas = empresas = [{'Nome de Pregão': '3R PETROLEUM',
   'Ticker': 'RRRP3',
   'CompanyName': '3R PETROLEUM ÓLEO E GÁS S.A'},
  {'Nome de Pregão': '524 PARTICIP',
@@ -1084,166 +1189,86 @@ empresas =  [{'Nome de Pregão': '3R PETROLEUM',
   'CompanyName': 'YDUQS PARTICIPACOES S.A.'},
  {'Nome de Pregão': 'ZAMP S.A.',
   'Ticker': 'ZAMP3',
-  'CompanyName': 'ZAMP S.A.'}]
+  'CompanyName': 'ZAMP S.A.'}]  # Exemplo, adapte conforme sua necessidade
 
-# Função para buscar dados históricos de ações via yfinance
-def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-    data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    tickers = [
-        ticker.strip() + '.SA' if any(char.isdigit() for char in ticker.strip()) and not ticker.strip().endswith('.SA')
-        else ticker.strip()
-        for ticker in tickers_input.split(",")
-    ]
-
-    dados_acoes_dict = {}
-    erros = []
-
-    for ticker in tickers:
-        try:
-            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
-            if not dados.empty:
-                dados.reset_index(inplace=True)
-                dados['Ticker'] = ticker
-                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
-                dados_acoes_dict[ticker] = dados
-            else:
-                erros.append(f"Sem dados para o ticker {ticker}")
-        except Exception as e:
-            erros.append(f"Erro ao buscar dados para {ticker}: {e}")
-    
-    return dados_acoes_dict, erros
-
-# Função para calcular volatilidade histórica e GARCH
-def calcular_volatilidade(df):
-    df = df.sort_values(by='Date', ascending=False).copy()
-    volatilidade_historica = {}
-    volatilidade_garch = {}
-    
-    periodos_dias = {1: 252, 2: 509, 3: 761, 4: 1000, 5: 1250, 6: 1500, 7: 1750, 8: 2000, 9: 2250, 10: 2500}
-    
-    for years, dias in periodos_dias.items():
-        df_period = df.head(dias).copy()
-        df_period['Retornos_Log'] = np.log(df_period['Close'] / df_period['Close'].shift(1))
-        df_period = df_period.dropna()
-        
-        if df_period.empty or len(df_period) < 30:
-            volatilidade_historica[years] = np.nan
-            volatilidade_garch[years] = np.nan
-            continue
-        
-        vol_anualizada_hist = df_period['Retornos_Log'].std(ddof=1) * np.sqrt(252)
-        volatilidade_historica[years] = vol_anualizada_hist
-        
-        try:
-            model = arch_model(df_period['Retornos_Log'] * 10, vol='Garch', p=1, q=1)
-            garch_result = model.fit(disp='off')
-            vol_diaria_media = garch_result.conditional_volatility.mean() / 10
-            vol_anualizada_garch = vol_diaria_media * np.sqrt(252)
-            volatilidade_garch[years] = vol_anualizada_garch
-        except:
-            volatilidade_garch[years] = np.nan
-    
-    df_volatilidade = pd.DataFrame({
-        'Volatilidade Histórica': pd.Series(volatilidade_historica),
-        'Volatilidade GARCH(1,1)': pd.Series(volatilidade_garch)
-    })
-    df_volatilidade.index.name = 'Período (Anos)'
-    return df_volatilidade
-
-# Interface do Streamlit
-st.title('Consulta dados históricos de Ações, Dividendos e Volatilidade')
-
-# Entrada do usuário
-tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
-data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
-data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
-buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
-calcular_volatilidade  = st.checkbox("Calcular volatilidade histórica e GARCH")
-
-# Botão para buscar dados
-if st.button('Buscar Dados'):
-    if tickers_input and data_inicio_input and data_fim_input:
+        # Buscar dados de ações (cada ticker num DF separado)
         dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
-        
+
+        # Exibir na tela possíveis erros
         for erro in erros:
             st.info(erro)
-        
+
+        # Caso não encontre dados de nenhum ticker
         if not dados_acoes_dict:
             st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
         else:
             st.write("### Dados de Ações por Ticker:")
+
+            # Mostrar cada DataFrame de ação individualmente no Streamlit
             for ticker, df_acao in dados_acoes_dict.items():
                 st.write(f"#### {ticker}")
                 st.dataframe(df_acao)
-                
-                if calcular_volatilidade:
-                    df_volatilidade = calcular_volatilidade(df_acao)
-                    st.write(f"### Volatilidade de {ticker}")
-                    st.dataframe(df_volatilidade)
-        
-        # Exportar para Excel
-        # Nome do arquivo de saída
-# Nome do arquivo de saída
-nome_arquivo = "dados_acoes_dividendos_volatilidade.xlsx"
 
-tem_dados_para_excel = False  # Flag para verificar se há dados antes de salvar
+            # -----------------------
+            # DIVIDENDOS (opcional) 
+            # -----------------------
+            dados_dividendos_dict = {}
+            if buscar_dividendos:
+                for ticker in tickers_input.split(','):
+                    ticker = ticker.strip()
+                    df_dividendos = buscar_dividendos_b3(ticker, empresas)
+                    if not df_dividendos.empty:
+                        # Filtrando dividendos por data
+                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], errors='coerce')
+                        data_ini = pd.to_datetime(data_inicio_input, format='%d/%m/%Y')
+                        data_fim = pd.to_datetime(data_fim_input, format='%d/%m/%Y')
+                        df_dividendos = df_dividendos[
+                            (df_dividendos['dateApproval'] >= data_ini) & 
+                            (df_dividendos['dateApproval'] <= data_fim)
+                        ]
+                        if not df_dividendos.empty:
+                            dados_dividendos_dict[ticker] = df_dividendos
 
-with pd.ExcelWriter(nome_arquivo, engine='openpyxl') as writer:
-    
-    # 1️⃣ Gravar dados de ações (se houver)
-    if dados_acoes_dict:
-        for ticker, df_acao in dados_acoes_dict.items():
-            if not df_acao.empty:
-                tem_dados_para_excel = True
-                
-                # ✅ Corrigir MultiIndex achatando colunas
-                if isinstance(df_acao.columns, pd.MultiIndex):
-                    df_acao.columns = ['_'.join(map(str, col)) for col in df_acao.columns]
+                if dados_dividendos_dict:
+                    st.write("### Dados de Dividendos por Ticker:")
+                    for ticker, df_divid in dados_dividendos_dict.items():
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_divid)
+                else:
+                    st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
 
-                # ✅ Garantir que todas as colunas são strings
-                df_acao.columns = df_acao.columns.astype(str)
-                
-                # ✅ Salvar no Excel
-                sheet_name = f"Acoes_{ticker[:25]}"
-                df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
+            # ------------------------------------------------
+            # GERAR EXCEL: cada ticker em uma aba diferente
+            # ------------------------------------------------
+            nome_arquivo = "dados_acoes_dividendos_.xlsx"
+            with pd.ExcelWriter(nome_arquivo) as writer:
+                # 1) Gravar dados de ações (cada ticker em uma aba)
+                for ticker, df_acao in dados_acoes_dict.items():
+                    # sheet_name não pode ter mais de 31 caracteres no Excel,
+                    # então podemos truncar ou simplesmente usar o ticker
+                    sheet_name = f"Acoes_{ticker[:25]}"
+                    df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    # 2️⃣ Gravar dividendos, se disponíveis
-    if buscar_dividendos and dados_dividendos_dict:
-        for ticker, df_divid in dados_dividendos_dict.items():
-            if not df_divid.empty:
-                tem_dados_para_excel = True
-                df_divid.columns = df_divid.columns.astype(str)
-                sheet_name = f"Div_{ticker[:25]}"
-                df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+                # 2) Se houver dados de dividendos, gravar por ticker também
+                if buscar_dividendos and dados_dividendos_dict:
+                    for ticker, df_divid in dados_dividendos_dict.items():
+                        sheet_name = f"Div_{ticker[:25]}"
+                        df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    # 3️⃣ Gravar volatilidade, se calculada
-    if calcular_volatilidade:
-        for ticker in dados_acoes_dict.keys():
-            df_ticker = dados_acoes_dict[ticker]
-
-            # 🚀 Cálculo de volatilidade
-            df_volatilidade = calcular_volatilidade_para_ticker(df_ticker)
-
-            if df_volatilidade is not None and not df_volatilidade.empty:
-                tem_dados_para_excel = True
-                df_volatilidade.columns = df_volatilidade.columns.astype(str)
-                sheet_name = f"Vol_{ticker[:25]}"
-                df_volatilidade.to_excel(writer, sheet_name=sheet_name, index=False)
-
-    # 🚨 Se nenhuma aba foi adicionada, evitar erro ao salvar
-    if not tem_dados_para_excel:
-        st.error("Nenhum dado válido foi encontrado para salvar no Excel.")
+            # Botão de download do Excel
+            with open(nome_arquivo, 'rb') as file:
+                st.download_button(
+                    label="Baixar arquivo Excel", 
+                    data=file, 
+                    file_name=nome_arquivo
+                )
     else:
-        writer.close()
+        st.error("Por favor, preencha todos os campos.")
 
-        # Botão para baixar o Excel no Streamlit
-        with open(nome_arquivo, 'rb') as file:
-            st.download_button(
-                label="Baixar arquivo Excel",
-                data=file,
-                file_name=nome_arquivo
-            )
-
+st.markdown("""
+---
+**Fonte dos dados:**
+- Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
+- Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
+- Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)
+""")

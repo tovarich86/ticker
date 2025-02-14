@@ -27,7 +27,7 @@ def get_trading_name(ticker, df_empresas):
     raise ValueError(f'Ticker {ticker} não encontrado.')
 
 # Função para buscar dividendos usando a API da B3
-def buscar_dividendos_b3(ticker, df_empresas):
+def buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim):
     try:
         trading_name = get_trading_name(ticker, df_empresas)
         payload = {
@@ -49,6 +49,8 @@ def buscar_dividendos_b3(ticker, df_empresas):
 
         df = pd.DataFrame(response_json['results'])
         df['Ticker'] = ticker
+        df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
+        df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
         return df
     except Exception as e:
         st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
@@ -105,6 +107,8 @@ if st.button('Buscar Dados'):
     if tickers_input and data_inicio_input and data_fim_input:
         if df_empresas is not None:
             tickers = [t.strip() for t in tickers_input.split(',')]
+            data_inicio = pd.to_datetime(data_inicio_input, format='%d/%m/%Y')
+            data_fim = pd.to_datetime(data_fim_input, format='%d/%m/%Y')
             dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
             dados_dividendos_dict = {}
 
@@ -119,7 +123,7 @@ if st.button('Buscar Dados'):
 
             if buscar_dividendos:
                 for ticker in tickers:
-                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas)
+                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
                         dados_dividendos_dict[ticker] = df_dividendos
 

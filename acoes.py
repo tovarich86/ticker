@@ -33,7 +33,7 @@ def buscar_dividendos_b3(ticker, df_empresas):
         payload = {
             "language": "pt-br",
             "pageNumber": 1,
-            "pageSize": 20,
+            "pageSize": 99,
             "tradingName": trading_name
         }
         payload_encoded = base64.b64encode(json.dumps(payload).encode()).decode()

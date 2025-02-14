@@ -21,9 +21,14 @@ def carregar_empresas():
 
 # Função para buscar nome de pregão corretamente formatado para a API da B3
 def get_trading_name(ticker, df_empresas):
-    empresa = df_empresas[df_empresas['Tickers'].astype(str).str.contains(ticker, na=False, regex=False)]
+    # Converter os tickers da coluna "Tickers" para listas de tickers individuais
+    df_empresas['Tickers'] = df_empresas['Tickers'].astype(str).apply(lambda x: [t.strip() for t in x.split(",")])
+    
+    # Filtrar as empresas onde o ticker exato aparece dentro da lista de tickers
+    empresa = df_empresas[df_empresas['Tickers'].apply(lambda tickers: ticker in tickers)]
+    
     if not empresa.empty:
-        nome_pregao = empresa.iloc[0]['Nome do Pregão'].replace("/", "").replace(" ", "").upper()  # Remover espaços e "/"
+        nome_pregao = empresa.iloc[0]['Nome do Pregão'].replace("/", "").replace(" ", "").upper()
         return nome_pregao
     raise ValueError(f'Ticker {ticker} não encontrado.')
 

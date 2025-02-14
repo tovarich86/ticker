@@ -117,7 +117,6 @@ if st.button('Buscar Dados'):
                 for ticker in tickers:
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas)
                     if not df_dividendos.empty:
-                        # Filtrando dividendos **APÓS** obter os dados
                         df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], errors='coerce')
                         df_dividendos = df_dividendos[
                             (df_dividendos['dateApproval'] >= data_inicio) &

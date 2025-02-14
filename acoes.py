@@ -27,9 +27,9 @@ def validar_data(data):
 
 # Função para buscar nome de pregão na planilha
 def get_trading_name(ticker, df_empresas):
-    empresa = df_empresas[df_empresas['Ticker'] == ticker]
+    empresa = df_empresas[df_empresas['Tickers'] == ticker]
     if not empresa.empty:
-        return empresa.iloc[0]['Nome de Pregão']
+        return empresa.iloc[0]['Nome do Pregão']
     raise ValueError('Ticker não encontrado.')
 
 # Função para buscar dividendos usando a API da B3
@@ -42,9 +42,8 @@ def buscar_dividendos_b3(ticker, df_empresas):
             "pageSize": "120",
             "tradingName": trading_name,
         }
-        params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
-        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
-        response = requests.get(url)
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/'
+        response = requests.get(url, params=params)
         response_json = response.json()
 
         if 'results' not in response_json:
@@ -103,73 +102,16 @@ st.title('Consulta dados históricos de Ações e Dividendos')
 # Carregar empresas do GitHub
 df_empresas = carregar_empresas()
 
-# Entrada do usuário
-tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
-data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
-data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
-buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
-
-# Botão para buscar dados
-if st.button('Buscar Dados'):
-    if tickers_input and data_inicio_input and data_fim_input:
-        if df_empresas is not None:
-            dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
-
-            for erro in erros:
-                st.info(erro)
-
-            if not dados_acoes_dict:
-                st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
-            else:
-                st.write("### Dados de Ações por Ticker:")
-                for ticker, df_acao in dados_acoes_dict.items():
-                    st.write(f"#### {ticker}")
-                    st.dataframe(df_acao)
-
-                # Busca de dividendos se a opção for marcada
-                dados_dividendos_dict = {}
-                if buscar_dividendos:
-                    for ticker in tickers_input.split(','):
-                        ticker = ticker.strip()
-                        df_dividendos = buscar_dividendos_b3(ticker, df_empresas)
-                        if not df_dividendos.empty:
-                            df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], errors='coerce')
-                            data_ini = pd.to_datetime(data_inicio_input, format='%d/%m/%Y')
-                            data_fim = pd.to_datetime(data_fim_input, format='%d/%m/%Y')
-                            df_dividendos = df_dividendos[
-                                (df_dividendos['dateApproval'] >= data_ini) & 
-                                (df_dividendos['dateApproval'] <= data_fim)
-                            ]
-                            if not df_dividendos.empty:
-                                dados_dividendos_dict[ticker] = df_dividendos
-
-                    if dados_dividendos_dict:
-                        st.write("### Dados de Dividendos por Ticker:")
-                        for ticker, df_divid in dados_dividendos_dict.items():
-                            st.write(f"#### {ticker}")
-                            st.dataframe(df_divid)
-                    else:
-                        st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
-
-                # Gerar arquivo Excel
-                nome_arquivo = "dados_acoes_dividendos.xlsx"
-                with pd.ExcelWriter(nome_arquivo) as writer:
-                    for ticker, df_acao in dados_acoes_dict.items():
-                        sheet_name = f"Acoes_{ticker[:25]}"
-                        df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
-
-                    if buscar_dividendos and dados_dividendos_dict:
-                        for ticker, df_divid in dados_dividendos_dict.items():
-                            sheet_name = f"Div_{ticker[:25]}"
-                            df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
-
-                with open(nome_arquivo, 'rb') as file:
-                    st.download_button(
-                        label="Baixar arquivo Excel", 
-                        data=file, 
-                        file_name=nome_arquivo
-                    )
+# Exemplo de teste
+if df_empresas is not None:
+    st.write("### Empresas carregadas com sucesso!")
+    st.dataframe(df_empresas.head())
+    
+    ticker_exemplo = "PETR4"
+    df_dividendos = buscar_dividendos_b3(ticker_exemplo, df_empresas)
+    
+    if not df_dividendos.empty:
+        st.write(f"### Dividendos de {ticker_exemplo}")
+        st.dataframe(df_dividendos)
     else:
-        st.error("Por favor, preencha todos os campos.")
-
-st.markdown("**Fonte dos dados:** Yahoo Finance, API da B3")
+        st.write(f"Nenhum dividendo encontrado para {ticker_exemplo}")

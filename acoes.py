@@ -19,17 +19,19 @@ def carregar_empresas():
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
         return None
 
-# Função para buscar nome de pregão na planilha
+# Função para buscar nome de pregão corretamente formatado para a API da B3
 def get_trading_name(ticker, df_empresas):
     empresa = df_empresas[df_empresas['Tickers'].astype(str).str.contains(ticker, na=False, regex=False)]
     if not empresa.empty:
-        return empresa.iloc[0]['Nome do Pregão']
+        nome_pregao = empresa.iloc[0]['Nome do Pregão'].replace("/", "").replace(" ", "").upper()  # Remover espaços e "/"
+        return nome_pregao
     raise ValueError(f'Ticker {ticker} não encontrado.')
 
 # Função para buscar dividendos usando a API da B3
 def buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim):
     try:
         trading_name = get_trading_name(ticker, df_empresas)
+
         payload = {
             "language": "pt-br",
             "pageNumber": 1,
@@ -38,12 +40,10 @@ def buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim):
         }
         payload_encoded = base64.b64encode(json.dumps(payload).encode()).decode()
         url = f"https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{payload_encoded}"
+        
         response = requests.get(url)
-
-        if response.status_code != 200:
-            raise ValueError(f"Erro na API B3: {response.status_code}")
-
         response_json = response.json()
+
         if 'results' not in response_json or not response_json['results']:
             raise ValueError(f'Dividendos não encontrados para {trading_name} ({ticker}).')
 
@@ -53,7 +53,7 @@ def buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim):
         df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
         return df
     except Exception as e:
-        st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
+        print(f"Dividendos não encontrados para o ticker {ticker}: {e}")
         return pd.DataFrame()
 
 # Função para buscar dados históricos de ações via yfinance

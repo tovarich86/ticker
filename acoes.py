@@ -102,16 +102,41 @@ st.title('Consulta dados históricos de Ações e Dividendos')
 # Carregar empresas do GitHub
 df_empresas = carregar_empresas()
 
-# Exemplo de teste
-if df_empresas is not None:
-    st.write("### Empresas carregadas com sucesso!")
-    st.dataframe(df_empresas.head())
-    
-    ticker_exemplo = "PETR4"
-    df_dividendos = buscar_dividendos_b3(ticker_exemplo, df_empresas)
-    
-    if not df_dividendos.empty:
-        st.write(f"### Dividendos de {ticker_exemplo}")
-        st.dataframe(df_dividendos)
-    else:
-        st.write(f"Nenhum dividendo encontrado para {ticker_exemplo}")
+# Entrada do usuário
+tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
+data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
+data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
+buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
+
+# Botão para buscar dados
+if st.button('Buscar Dados'):
+    if tickers_input and data_inicio_input and data_fim_input:
+        if df_empresas is not None:
+            dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
+
+            for erro in erros:
+                st.info(erro)
+
+            if not dados_acoes_dict:
+                st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
+            else:
+                nome_arquivo = "dados_acoes_dividendos.xlsx"
+                with pd.ExcelWriter(nome_arquivo) as writer:
+                    for ticker, df_acao in dados_acoes_dict.items():
+                        sheet_name = f"Acoes_{ticker[:25]}"
+                        df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                    if buscar_dividendos:
+                        for ticker in tickers_input.split(','):
+                            ticker = ticker.strip()
+                            df_dividendos = buscar_dividendos_b3(ticker, df_empresas)
+                            if not df_dividendos.empty:
+                                sheet_name = f"Div_{ticker[:25]}"
+                                df_dividendos.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                with open(nome_arquivo, 'rb') as file:
+                    st.download_button(
+                        label="Baixar arquivo Excel", 
+                        data=file, 
+                        file_name=nome_arquivo
+                    )

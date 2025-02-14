@@ -27,10 +27,10 @@ def validar_data(data):
 
 # Função para buscar nome de pregão na planilha
 def get_trading_name(ticker, df_empresas):
-    empresa = df_empresas[df_empresas['Tickers'] == ticker]
+    empresa = df_empresas[df_empresas['Tickers'].astype(str).str.contains(ticker, na=False, regex=False)]
     if not empresa.empty:
         return empresa.iloc[0]['Nome do Pregão']
-    raise ValueError('Ticker não encontrado.')
+    raise ValueError(f'Ticker {ticker} não encontrado.')
 
 # Função para buscar dividendos usando a API da B3
 def buscar_dividendos_b3(ticker, df_empresas):

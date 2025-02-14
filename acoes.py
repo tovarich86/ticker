@@ -23,11 +23,14 @@ def get_trading_name(ticker, df_empresas):
     empresa = df_empresas[df_empresas['Tickers'].apply(lambda tickers: ticker in tickers)]
     if not empresa.empty:
         return empresa.iloc[0]['Nome do Pregão'].replace("/", "").replace(" ", "").upper()
-    raise ValueError(f'Ticker {ticker} não encontrado.')
+    return None
 
-def buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim):
+def buscar_dividendos_b3(ticker, df_empresas):
     try:
         trading_name = get_trading_name(ticker, df_empresas)
+        if not trading_name:
+            return pd.DataFrame()
+        
         payload = {
             "language": "pt-br",
             "pageNumber": 1,
@@ -46,7 +49,6 @@ def buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim):
         df = pd.DataFrame(response_json['results'])
         df['Ticker'] = ticker
         df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
-        df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
         return df
     except Exception as e:
         print(f"Erro ao buscar dividendos para {ticker}: {e}")
@@ -69,7 +71,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     for ticker in tickers:
         try:
             dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
-
             if not dados.empty:
                 dados.columns = [col[0] if isinstance(col, tuple) else col for col in dados.columns]
                 dados['Ticker'] = ticker
@@ -114,9 +115,16 @@ if st.button('Buscar Dados'):
 
             if buscar_dividendos:
                 for ticker in tickers:
-                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
+                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas)
                     if not df_dividendos.empty:
-                        dados_dividendos_dict[ticker] = df_dividendos
+                        # Filtrando dividendos **APÓS** obter os dados
+                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], errors='coerce')
+                        df_dividendos = df_dividendos[
+                            (df_dividendos['dateApproval'] >= data_inicio) &
+                            (df_dividendos['dateApproval'] <= data_fim)
+                        ]
+                        if not df_dividendos.empty:
+                            dados_dividendos_dict[ticker] = df_dividendos
 
             if dados_dividendos_dict:
                 st.write("### Dados de Dividendos por Ticker:")
@@ -124,12 +132,11 @@ if st.button('Buscar Dados'):
                     st.write(f"#### {ticker}")
                     st.dataframe(df_divid)
 
-            # Gerar arquivo Excel corretamente
             nome_arquivo = "dados_acoes_dividendos.xlsx"
             with pd.ExcelWriter(nome_arquivo) as writer:
                 for ticker, df_acao in dados_acoes_dict.items():
                     df_acao.to_excel(writer, sheet_name=f"Acoes_{ticker[:25]}", index=False)
-                
+
                 if buscar_dividendos and dados_dividendos_dict:
                     for ticker, df_divid in dados_dividendos_dict.items():
                         df_divid.to_excel(writer, sheet_name=f"Div_{ticker[:25]}", index=False)

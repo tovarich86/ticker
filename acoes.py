@@ -12,6 +12,8 @@ URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresa
 def carregar_empresas():
     try:
         df_empresas = pd.read_excel(URL_EMPRESAS)
+        # Padronizar "Nome do Pregão"
+        df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' SA', regex=True).str.upper()
         return df_empresas
     except Exception as e:
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
@@ -224,7 +226,7 @@ if st.button('Buscar Dados'):
 st.markdown("""
 ---
 **Fonte dos dados:**
-- Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.yahoo.com)
+- Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)
 """)

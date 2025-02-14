@@ -6,7 +6,7 @@ from base64 import b64encode
 from datetime import datetime, timedelta
 
 # URL do arquivo no GitHub
-URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
+URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3%20(1).xlsx"
 
 @st.cache_data
 def carregar_empresas():

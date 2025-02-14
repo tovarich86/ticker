@@ -25,34 +25,37 @@ def get_trading_name(ticker, df_empresas):
         return empresa.iloc[0]['Nome do Pregão'].replace("/", "").replace(" ", "").upper()
     return None
 
-def buscar_dividendos_b3(ticker, df_empresas):
-    try:
-        trading_name = get_trading_name(ticker, df_empresas)
-        if not trading_name:
-            return pd.DataFrame()
-        
-        payload = {
-            "language": "pt-br",
-            "pageNumber": 1,
-            "pageSize": 99,
-            "tradingName": trading_name
-        }
-        payload_encoded = base64.b64encode(json.dumps(payload).encode()).decode()
-        url = f"https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{payload_encoded}"
-        
-        response = requests.get(url)
-        response_json = response.json()
+def buscar_dividendos_b3(tickers, df_empresas, data_inicio, data_fim):
+    dados_dividendos_dict = {}
+    for ticker in tickers:
+        try:
+            trading_name = get_trading_name(ticker, df_empresas)
+            if not trading_name:
+                continue
 
-        if 'results' not in response_json or not response_json['results']:
-            return pd.DataFrame()
+            payload = {
+                "language": "pt-br",
+                "pageNumber": 1,
+                "pageSize": 99,
+                "tradingName": trading_name
+            }
+            payload_encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+            url = f"https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{payload_encoded}"
 
-        df = pd.DataFrame(response_json['results'])
-        df['Ticker'] = ticker
-        df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
-        return df
-    except Exception as e:
-        print(f"Erro ao buscar dividendos para {ticker}: {e}")
-        return pd.DataFrame()
+            response = requests.get(url)
+            response_json = response.json()
+
+            if 'results' in response_json and response_json['results']:
+                df = pd.DataFrame(response_json['results'])
+                df['Ticker'] = ticker
+                df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
+                df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
+                if not df.empty:
+                    dados_dividendos_dict[ticker] = df
+        except Exception as e:
+            print(f"Erro ao buscar dividendos para {ticker}: {e}")
+    
+    return dados_dividendos_dict
 
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
@@ -102,7 +105,6 @@ if st.button('Buscar Dados'):
             data_inicio = pd.to_datetime(data_inicio_input, format='%d/%m/%Y')
             data_fim = pd.to_datetime(data_fim_input, format='%d/%m/%Y')
             dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
-            dados_dividendos_dict = {}
 
             for erro in erros:
                 st.info(erro)
@@ -114,22 +116,13 @@ if st.button('Buscar Dados'):
                     st.dataframe(df_acao)
 
             if buscar_dividendos:
-                for ticker in tickers:
-                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas)
-                    if not df_dividendos.empty:
-                        df_dividendos['dateApproval'] = pd.to_datetime(df_dividendos['dateApproval'], errors='coerce')
-                        df_dividendos = df_dividendos[
-                            (df_dividendos['dateApproval'] >= data_inicio) &
-                            (df_dividendos['dateApproval'] <= data_fim)
-                        ]
-                        if not df_dividendos.empty:
-                            dados_dividendos_dict[ticker] = df_dividendos
+                dados_dividendos_dict = buscar_dividendos_b3(tickers, df_empresas, data_inicio, data_fim)
 
-            if dados_dividendos_dict:
-                st.write("### Dados de Dividendos por Ticker:")
-                for ticker, df_divid in dados_dividendos_dict.items():
-                    st.write(f"#### {ticker}")
-                    st.dataframe(df_divid)
+                if dados_dividendos_dict:
+                    st.write("### Dados de Dividendos por Ticker:")
+                    for ticker, df_divid in dados_dividendos_dict.items():
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_divid)
 
             nome_arquivo = "dados_acoes_dividendos.xlsx"
             with pd.ExcelWriter(nome_arquivo) as writer:
@@ -142,11 +135,9 @@ if st.button('Buscar Dados'):
 
             with open(nome_arquivo, 'rb') as file:
                 st.download_button(
-                    label="Baixar arquivo Excel", 
-                    data=file, 
+                    label="Baixar arquivo Excel",
+                    data=file,
                     file_name=nome_arquivo
                 )
     else:
         st.error("Por favor, preencha todos os campos.")
-
-st.markdown("**Fonte dos dados:** Yahoo Finance, API da B3")

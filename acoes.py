@@ -37,16 +37,25 @@ def get_trading_name(ticker, empresas_df):
             return row['Nome do Pregão']
     raise ValueError('Ticker não encontrado.')
 
-# Função para buscar dividendos usando a API da B3
-def buscar_dividendos_b3(tickers, empresas_df, data_inicio, data_fim):
+def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
-    Retorna um dicionário onde a chave é o ticker e o valor é o DataFrame com dividendos.
+    Retorna um DataFrame com dividendos do ticker em questão.
     Se não encontrar dividendos ou ocorrer erro, retorna DataFrame vazio.
+    Tenta diferentes variações de "Nome do Pregão" se a busca inicial falhar.
     """
-    dados_dividendos_dict = {}
-    for ticker in tickers:
+    trading_name_variations = []
+    try:
+        trading_name = get_trading_name(ticker, empresas_df)
+        trading_name_variations = [trading_name,
+                                   trading_name.replace(" SA", " S.A."),
+                                   trading_name.replace(" SA", " S/A"),
+                                   trading_name.replace(" SA", " SA.")]
+    except ValueError as e:
+        st.info(f"Ticker não encontrado: {e}")
+        return pd.DataFrame()
+
+    for trading_name in trading_name_variations:
         try:
-            trading_name = get_trading_name(ticker, empresas_df)
             params = {
                 "language": "pt-br",
                 "pageNumber": "1",
@@ -59,7 +68,7 @@ def buscar_dividendos_b3(tickers, empresas_df, data_inicio, data_fim):
             response_json = response.json()
 
             if 'results' not in response_json:
-                st.info(f'A chave "results" não está presente na resposta para o ticker {ticker}.')
+                st.info(f'A chave "results" não está presente na resposta para o ticker {ticker} com nome de pregão "{trading_name}".')
                 continue
 
             dividends_data = response_json['results']
@@ -70,20 +79,19 @@ def buscar_dividendos_b3(tickers, empresas_df, data_inicio, data_fim):
             if 'Ticker' in df.columns:
                 cols = ['Ticker'] + [col for col in df if col != 'Ticker']
                 df = df[cols]
-            
+
             # Convertendo 'dateApproval' para datetime e filtrando por período
             df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
             df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
 
             if not df.empty:
-                dados_dividendos_dict[ticker] = df
-            else:
-                st.info(f"Nenhum dividendo encontrado para o ticker {ticker} no período especificado.")
+                return df  # Retorna o DataFrame se encontrar dividendos
 
         except Exception as e:
-            st.info(f"Erro ao buscar dividendos para o ticker {ticker}: {e}")
+            st.info(f"Erro ao buscar dividendos para o ticker {ticker} com nome de pregão {trading_name}: {e}")
 
-    return dados_dividendos_dict
+    st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
+    return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação
 
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
@@ -184,8 +192,11 @@ if st.button('Buscar Dados'):
             # -----------------------
             dados_dividendos_dict = {}
             if buscar_dividendos:
-                # Passa o DataFrame de empresas carregado do Excel
-                dados_dividendos_dict = buscar_dividendos_b3(tickers, df_empresas, data_inicio, data_fim)
+                dados_dividendos_dict = {}
+                for ticker in tickers:
+                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
+                    if not df_dividendos.empty:
+                        dados_dividendos_dict[ticker] = df_dividendos
 
                 if dados_dividendos_dict:
                     st.write("### Dados de Dividendos por Ticker:")
@@ -225,7 +236,7 @@ if st.button('Buscar Dados'):
 
 st.markdown("""
 ---
-**Fonte dos dados:**
+**[Fonte dos dados](pplx://action/followup):**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)

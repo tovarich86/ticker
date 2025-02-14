@@ -4,6 +4,7 @@ import pandas as pd
 import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
+import json  # Importe o módulo json
 
 # URL do arquivo no GitHub
 URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
@@ -30,7 +31,7 @@ def validar_data(data):
 def get_trading_name(ticker, empresas_df):
     # Garante que a coluna 'Tickers' é string e aplica a função para separar os tickers
     empresas_df['Tickers'] = empresas_df['Tickers'].astype(str).apply(lambda x: [t.strip() for t in x.split(",")])
-    
+
     # Itera sobre cada linha do DataFrame para verificar se o ticker está na lista de tickers da empresa
     for index, row in empresas_df.iterrows():
         if ticker in row['Tickers']:
@@ -62,7 +63,10 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 "pageSize": "120",
                 "tradingName": trading_name,
             }
-            params_encoded = b64encode(str(params).encode('ascii')).decode('ascii')
+            # Converte o dicionário para JSON
+            params_json = json.dumps(params)
+            # Codifica o JSON para Base64
+            params_encoded = b64encode(params_json.encode('ascii')).decode('ascii')
             url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
             response = requests.get(url)
             response_json = response.json()
@@ -103,8 +107,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
     data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
     data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # Ajustando o sufixo .SA para tickers que não sejam ^BVSP
     tickers = [
         ticker.strip() + '.SA' if any(char.isdigit() for char in ticker.strip()) and not ticker.strip().endswith('.SA')
         else ticker.strip()
@@ -197,7 +199,6 @@ if st.button('Buscar Dados'):
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
                         dados_dividendos_dict[ticker] = df_dividendos
-
                 if dados_dividendos_dict:
                     st.write("### Dados de Dividendos por Ticker:")
                     for ticker, df_divid in dados_dividendos_dict.items():

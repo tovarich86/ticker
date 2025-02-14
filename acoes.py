@@ -192,16 +192,16 @@ if st.button('Buscar Dados'):
             # -----------------------
             # DIVIDENDOS (opcional)
             # -----------------------
-            dados_dividendos_dict = {}
+            dados_dividendos_dict = {}  # Inicializa o dicionário *fora* do loop
             if buscar_dividendos:
-                dados_dividendos_dict = {}
                 for ticker in tickers:
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
-                        dados_dividendos_dict[ticker] = df_dividendos
-                if dados_dividendos_dict:
+                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
+
+                if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
                     st.write("### Dados de Dividendos por Ticker:")
-                    for ticker, df_divid in dados_dividendos_dict.items():
+                    for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos
                         st.write(f"#### {ticker}")
                         st.dataframe(df_divid)
                 else:

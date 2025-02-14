@@ -54,6 +54,40 @@ def buscar_dividendos_b3(ticker, df_empresas):
         st.info(f"Dividendos não encontrados para o ticker {ticker}: {e}")
         return pd.DataFrame()
 
+# Função para buscar dados históricos de ações via yfinance
+def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
+    data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+    data_fim_ajustada = (datetime.strptime(data_fim, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    tickers = [
+        ticker.strip() + '.SA' if any(char.isdigit() for char in ticker.strip()) and not ticker.strip().endswith('.SA')
+        else ticker.strip()
+        for ticker in tickers_input.split(",")
+    ]
+
+    dados_acoes_dict = {}
+    erros = []
+
+    for ticker in tickers:
+        try:
+            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
+
+            if not dados.empty:
+                dados.columns = [col[0] if isinstance(col, tuple) else col for col in dados.columns]
+                dados['Ticker'] = ticker
+                dados.reset_index(inplace=True)
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
+
+                dados_acoes_dict[ticker] = dados
+            else:
+                erros.append(f"Sem dados para o ticker {ticker}")
+        except Exception as e:
+            erros.append(f"Erro ao buscar dados para {ticker}: {e}")
+            continue
+
+    return dados_acoes_dict, erros
+
 # Interface do Streamlit
 st.title('Consulta dados históricos de Ações e Dividendos')
 
@@ -71,7 +105,17 @@ if st.button('Buscar Dados'):
     if tickers_input and data_inicio_input and data_fim_input:
         if df_empresas is not None:
             tickers = [t.strip() for t in tickers_input.split(',')]
+            dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
             dados_dividendos_dict = {}
+
+            for erro in erros:
+                st.info(erro)
+
+            if dados_acoes_dict:
+                st.write("### Dados de Ações por Ticker:")
+                for ticker, df_acao in dados_acoes_dict.items():
+                    st.write(f"#### {ticker}")
+                    st.dataframe(df_acao)
 
             if buscar_dividendos:
                 for ticker in tickers:
@@ -79,17 +123,18 @@ if st.button('Buscar Dados'):
                     if not df_dividendos.empty:
                         dados_dividendos_dict[ticker] = df_dividendos
 
-                if dados_dividendos_dict:
-                    st.write("### Dados de Dividendos por Ticker:")
-                    for ticker, df_divid in dados_dividendos_dict.items():
-                        st.write(f"#### {ticker}")
-                        st.dataframe(df_divid)
-                else:
-                    st.info("Nenhum dado de dividendos encontrado para os tickers especificados.")
+            if dados_dividendos_dict:
+                st.write("### Dados de Dividendos por Ticker:")
+                for ticker, df_divid in dados_dividendos_dict.items():
+                    st.write(f"#### {ticker}")
+                    st.dataframe(df_divid)
 
             # Gerar arquivo Excel
             nome_arquivo = "dados_acoes_dividendos.xlsx"
             with pd.ExcelWriter(nome_arquivo) as writer:
+                for ticker, df_acao in dados_acoes_dict.items():
+                    sheet_name = f"Acoes_{ticker[:25]}"
+                    df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
                 if buscar_dividendos and dados_dividendos_dict:
                     for ticker, df_divid in dados_dividendos_dict.items():
                         sheet_name = f"Div_{ticker[:25]}"
@@ -104,4 +149,4 @@ if st.button('Buscar Dados'):
     else:
         st.error("Por favor, preencha todos os campos.")
 
-st.markdown("**Fonte dos dados:** API da B3")
+st.markdown("**Fonte dos dados:** Yahoo Finance, API da B3")

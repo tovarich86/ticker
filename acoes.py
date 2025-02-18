@@ -15,8 +15,6 @@ def carregar_empresas():
         df_empresas = pd.read_excel(URL_EMPRESAS)
         # Padronizar "Nome do Pregão"
         df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
-        # Converter a coluna 'Tickers' para string
-        df_empresas['Tickers'] = df_empresas['Tickers'].astype(str)
         return df_empresas
     except Exception as e:
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
@@ -87,8 +85,19 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 cols = ['Ticker'] + [col for col in df if col != 'Ticker']
                 df = df[cols]
 
-            # Convertendo 'dateApproval' para datetime e filtrando por período
-            df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
+            # Imprime informações de debug
+            st.write(f"Data de início: {data_inicio}")
+            st.write(f"Data de fim: {data_fim}")
+
+            # Converte 'dateApproval' para datetime e lida com valores ausentes
+            df['dateApproval'] = pd.to_datetime(df['dateApproval'], format='%d/%m/%Y', errors='coerce')
+            df = df.dropna(subset=['dateApproval'])
+
+            # Imprime as datas após a conversão
+            st.write("Datas após conversão:")
+            st.write(df['dateApproval'])
+
+            # Filtra o DataFrame pelo período
             df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
 
             if not df.empty:
@@ -237,9 +246,8 @@ if st.button('Buscar Dados'):
 
 st.markdown("""
 ---
-**[[Fonte dos dados](pplx](pplx://action/followup)://action/followup):**
+**[[Fonte dos dados](pplx://action/followup):**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)
 """)
-

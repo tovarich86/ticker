@@ -4,7 +4,7 @@ import pandas as pd
 import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
-import json  # Importe o módulo json
+import json
 
 # URL do arquivo no GitHub
 URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
@@ -37,7 +37,7 @@ def get_trading_name(ticker, empresas_df):
         if ticker in row['Tickers']:
             return row['Nome do Pregão']
     raise ValueError('Ticker não encontrado.')
-    
+
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Retorna um DataFrame com dividendos do ticker em questão.
@@ -114,7 +114,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     ]
     dados_acoes_dict = {}
     erros = []
-
     for ticker in tickers:
         try:
             dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
@@ -197,7 +196,6 @@ if st.button('Buscar Dados'):
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
                         dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
-
                 # Após buscar dividendos para todos os tickers, exibe os resultados
                 if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
                     st.write("### Dados de Dividendos por Ticker:")

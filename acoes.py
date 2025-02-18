@@ -34,9 +34,16 @@ def get_trading_name(ticker, empresas_df):
     Retorna None se o ticker não for encontrado.
     """
     for index, row in empresas_df.iterrows():
-        tickers = [t.strip() for t in row['Tickers'].split(",")]
-        if ticker in tickers:
-            return row['Nome do Pregão']
+        try:
+            # Garante que o valor da coluna 'Tickers' seja uma string
+            tickers_str = str(row['Tickers'])
+            tickers = [t.strip() for t in tickers_str.split(",")]
+            if ticker in tickers:
+                return row['Nome do Pregão']
+        except AttributeError as e:
+            st.error(f"Erro ao processar tickers para a empresa na linha {index + 2}: {e}")
+            st.error(f"Valor problemático na coluna 'Tickers': {row['Tickers']}")
+            continue  # Pula para a próxima iteração do loop
     return None  # Retorna None se o ticker não for encontrado
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
@@ -85,19 +92,8 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 cols = ['Ticker'] + [col for col in df if col != 'Ticker']
                 df = df[cols]
 
-            # Imprime informações de debug
-            st.write(f"Data de início: {data_inicio}")
-            st.write(f"Data de fim: {data_fim}")
-
-            # Converte 'dateApproval' para datetime e lida com valores ausentes
-            df['dateApproval'] = pd.to_datetime(df['dateApproval'], format='%d/%m/%Y', errors='coerce')
-            df = df.dropna(subset=['dateApproval'])
-
-            # Imprime as datas após a conversão
-            st.write("Datas após conversão:")
-            st.write(df['dateApproval'])
-
-            # Filtra o DataFrame pelo período
+            # Convertendo 'dateApproval' para datetime e filtrando por período
+            df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
             df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
 
             if not df.empty:

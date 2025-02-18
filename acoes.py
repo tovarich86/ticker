@@ -15,7 +15,7 @@ def carregar_empresas():
         # Ler o arquivo CSV
         df_empresas = pd.read_csv(URL_EMPRESAS)
         # Padronizar "Nome do Pregão"
-        df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
+        df_empresas['Nome'] = df_empresas['Nome'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
         return df_empresas
     except Exception as e:
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
@@ -36,7 +36,7 @@ def get_trading_name(ticker, empresas_df):
     # Itera sobre cada linha do DataFrame para verificar se o ticker está na lista de tickers da empresa
     for index, row in empresas_df.iterrows():
         if ticker in row['Tickers']:
-            return row['Nome do Pregão']
+            return row['Nome']
     return None  # Retorna None se o ticker não for encontrado
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):

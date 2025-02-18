@@ -60,7 +60,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
             params = {
                 "language": "pt-br",
                 "pageNumber": "1",
-                "pageSize": "120",
+                "pageSize": "60",
                 "tradingName": trading_name,
             }
             # Converte o dicionário para JSON

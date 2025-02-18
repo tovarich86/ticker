@@ -6,16 +6,17 @@ from base64 import b64encode
 from datetime import datetime, timedelta
 import json
 
-# URL do arquivo no GitHub (alterado para CSV)
-URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.csv"
+# URL do arquivo no GitHub
+URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
 
 @st.cache_data
 def carregar_empresas():
     try:
-        # Ler o arquivo CSV
-        df_empresas = pd.read_csv(URL_EMPRESAS)
+        df_empresas = pd.read_excel(URL_EMPRESAS)
         # Padronizar "Nome do Pregão"
-        df_empresas['Nome'] = df_empresas['Nome'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
+        df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
+        # Converter a coluna 'Tickers' para string
+        df_empresas['Tickers'] = df_empresas['Tickers'].astype(str)
         return df_empresas
     except Exception as e:
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
@@ -30,13 +31,14 @@ def validar_data(data):
 
 # Função para buscar nome de pregão usando a API da B3
 def get_trading_name(ticker, empresas_df):
-    # Garante que a coluna 'Tickers' é string e aplica a função para separar os tickers
-    empresas_df['Tickers'] = empresas_df['Tickers'].astype(str).apply(lambda x: [t.strip() for t in x.split(",")])
-
-    # Itera sobre cada linha do DataFrame para verificar se o ticker está na lista de tickers da empresa
+    """
+    Busca o nome de pregão de um ticker na planilha de empresas.
+    Retorna None se o ticker não for encontrado.
+    """
     for index, row in empresas_df.iterrows():
-        if ticker in row['Tickers']:
-            return row['Nome']
+        tickers = [t.strip() for t in row['Tickers'].split(",")]
+        if ticker in tickers:
+            return row['Nome do Pregão']
     return None  # Retorna None se o ticker não for encontrado
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):

@@ -85,8 +85,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 df = df[cols]
 
             # Convertendo 'dateApproval' para datetime e filtrando por período
-            df['dateApproval'] = pd.to_datetime(df['dateApproval'], format='%d/%m/%Y', errors='coerce')
-            df = df.dropna(subset=['dateApproval'])  # Remove NaT values
+            df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
             df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
 
             if not df.empty:
@@ -97,7 +96,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
     return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação
-    
 
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
@@ -114,7 +112,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
         else ticker.strip()
         for ticker in tickers_input.split(",")
     ]
-
     dados_acoes_dict = {}
     erros = []
 
@@ -240,7 +237,7 @@ if st.button('Buscar Dados'):
 
 st.markdown("""
 ---
-**[Fonte dos dados](pplx://action/followup):**
+**[[Fonte dos dados](pplx](pplx://action/followup)://action/followup):**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)

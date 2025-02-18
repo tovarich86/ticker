@@ -47,9 +47,20 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     Se não encontrar dividendos ou ocorrer erro, retorna DataFrame vazio.
     Tenta diferentes variações de "Nome do Pregão" se a busca inicial falhar.
     """
+    # Verifica se o ticker contém apenas letras (sinalizando ticker internacional)
+    if not any(char.isdigit() for char in ticker):
+        st.info(f"O ticker {ticker} parece ser internacional. Dividendos da B3 não serão buscados.")
+        return pd.DataFrame()
+
     trading_name_variations = []
     try:
         trading_name = get_trading_name(ticker, empresas_df)
+        
+        # Verifica se trading_name é None antes de prosseguir
+        if trading_name is None:
+            st.info(f"Nome de pregão não encontrado para o ticker {ticker} na planilha de empresas.")
+            return pd.DataFrame()
+        
         trading_name_variations = [trading_name,
                                    trading_name.replace(" SA", " S.A."),
                                    trading_name.replace(" SA", " S/A"),
@@ -99,9 +110,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
             st.info(f"Erro ao buscar dividendos para o ticker {ticker} com nome de pregão {trading_name}: {e}")
 
     st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
-    return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação
-
-# Função para buscar dados históricos de ações via yfinance
+    return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação... # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """
     Retorna dois dicionários:
@@ -120,7 +129,11 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     erros = []
     for ticker in tickers:
         try:
-            dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
+            # Tenta adicionar .SA apenas se o ticker não for internacional
+            if any(char.isdigit() for char in ticker):
+                dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
+            else:
+                dados = yf.download(ticker, start=data_inicio, end=data_fim_ajustada, auto_adjust=False)
 
             if not dados.empty:
                 # Flatten do MultiIndex para evitar erros
@@ -154,7 +167,7 @@ if df_empresas is None:
     st.stop()  # Para a execução do script se não conseguir carregar a lista de empresas
 
 # Entrada do usuário
-tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP):")
+tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP, IP):")
 data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
 data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
 buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
@@ -190,7 +203,6 @@ if st.button('Buscar Dados'):
             for ticker, df_acao in dados_acoes_dict.items():
                 st.write(f"#### {ticker}")
                 st.dataframe(df_acao)
-
             # -----------------------
             # DIVIDENDOS (opcional)
             # -----------------------
@@ -199,7 +211,8 @@ if st.button('Buscar Dados'):
                 for ticker in tickers:
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
-                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário... # Após buscar dividendos para todos os tickers, exibe os resultados
+                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
+                # Após buscar dividendos para todos os tickers, exibe os resultados
                 if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
                     st.write("### Dados de Dividendos por Ticker:")
                     for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos

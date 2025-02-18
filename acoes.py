@@ -15,6 +15,8 @@ def carregar_empresas():
         df_empresas = pd.read_excel(URL_EMPRESAS)
         # Padronizar "Nome do Pregão"
         df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
+        # Converter a coluna 'Tickers' para string
+        df_empresas['Tickers'] = df_empresas['Tickers'].astype(str)
         return df_empresas
     except Exception as e:
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
@@ -34,16 +36,9 @@ def get_trading_name(ticker, empresas_df):
     Retorna None se o ticker não for encontrado.
     """
     for index, row in empresas_df.iterrows():
-        try:
-            # Garante que o valor da coluna 'Tickers' seja uma string
-            tickers_str = str(row['Tickers'])
-            tickers = [t.strip() for t in tickers_str.split(",")]
-            if ticker in tickers:
-                return row['Nome do Pregão']
-        except AttributeError as e:
-            st.error(f"Erro ao processar tickers para a empresa na linha {index + 2}: {e}")
-            st.error(f"Valor problemático na coluna 'Tickers': {row['Tickers']}")
-            continue  # Pula para a próxima iteração do loop
+        tickers = [t.strip() for t in row['Tickers'].split(",")]
+        if ticker in tickers:
+            return row['Nome do Pregão']
     return None  # Retorna None se o ticker não for encontrado
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
@@ -53,14 +48,14 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     Tenta diferentes variações de "Nome do Pregão" se a busca inicial falhar.
     """
     trading_name_variations = []
-    trading_name = get_trading_name(ticker, empresas_df)
-    if trading_name:
+    try:
+        trading_name = get_trading_name(ticker, empresas_df)
         trading_name_variations = [trading_name,
                                    trading_name.replace(" SA", " S.A."),
                                    trading_name.replace(" SA", " S/A"),
                                    trading_name.replace(" SA", " SA.")]
-    else:
-        st.info(f"Ticker não encontrado: {ticker}")
+    except ValueError as e:
+        st.info(f"Ticker não encontrado: {e}")
         return pd.DataFrame()
 
     for trading_name in trading_name_variations:
@@ -93,7 +88,8 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 df = df[cols]
 
             # Convertendo 'dateApproval' para datetime e filtrando por período
-            df['dateApproval'] = pd.to_datetime(df['dateApproval'], errors='coerce')
+            df['dateApproval'] = pd.to_datetime(df['dateApproval'], format='%d/%m/%Y', errors='coerce')
+            df = df.dropna(subset=['dateApproval'])  # Remove NaT values
             df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
 
             if not df.empty:
@@ -104,7 +100,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
     return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação
-
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """
@@ -242,7 +237,7 @@ if st.button('Buscar Dados'):
 
 st.markdown("""
 ---
-**[[Fonte dos dados](pplx://action/followup):**
+**[[Fonte dos dados](pplx](pplx://action/followup)://action/followup):**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)

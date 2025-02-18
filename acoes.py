@@ -29,10 +29,6 @@ def validar_data(data):
 
 # Função para buscar nome de pregão usando a API da B3
 def get_trading_name(ticker, empresas_df):
-    """
-    Retorna o Nome do Pregão para um dado ticker usando o DataFrame de empresas.
-    Levanta um ValueError se o ticker não for encontrado.
-    """
     # Garante que a coluna 'Tickers' é string e aplica a função para separar os tickers
     empresas_df['Tickers'] = empresas_df['Tickers'].astype(str).apply(lambda x: [t.strip() for t in x.split(",")])
 
@@ -40,19 +36,26 @@ def get_trading_name(ticker, empresas_df):
     for index, row in empresas_df.iterrows():
         if ticker in row['Tickers']:
             return row['Nome do Pregão']
-    raise ValueError(f'Ticker {ticker} não encontrado na lista de empresas da B3.')
+    raise ValueError('Ticker não encontrado.')
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
-    Retorna um DataFrame com dividendos do ticker em questão, buscando na B3.
-    Se não encontrar dividendos ou ocorrer erro (incluindo ticker não listado), retorna DataFrame vazio.
+    Retorna um DataFrame com dividendos do ticker em questão.
+    Se não encontrar dividendos ou ocorrer erro, retorna DataFrame vazio.
+    Tenta diferentes variações de "Nome do Pregão" se a busca inicial falhar.
     """
-    try:
-        trading_name = get_trading_name(ticker, empresas_df)
-        trading_name_variations = [trading_name,
-                                   trading_name.replace(" SA", " S.A."),
-                                   trading_name.replace(" SA", " S/A"),
-                                   trading_name.replace(" SA", " SA.")]
+    # Verificar se o ticker é internacional (ex: não termina com ".SA")
+    if ticker.endswith(".SA"):
+        trading_name_variations = []
+        try:
+            trading_name = get_trading_name(ticker, empresas_df)
+            trading_name_variations = [trading_name,
+                                       trading_name.replace(" SA", " S.A."),
+                                       trading_name.replace(" SA", " S/A"),
+                                       trading_name.replace(" SA", " SA.")]
+        except ValueError as e:
+            st.info(f"Ticker não encontrado: {e}")
+            return pd.DataFrame()
 
         for trading_name in trading_name_variations:
             try:
@@ -95,12 +98,8 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
         st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
         return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação
-
-    except ValueError as e:
-        st.info(f"{e}") # Ticker não encontrado na B3
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Erro inesperado ao buscar dividendos para {ticker}: {e}")
+    else:
+        st.info(f"Dividendos da B3 não são aplicáveis para o ticker internacional {ticker}.")
         return pd.DataFrame()
 
 # Função para buscar dados históricos de ações via yfinance
@@ -200,6 +199,7 @@ if st.button('Buscar Dados'):
             dados_dividendos_dict = {}  # Inicializa o dicionário *fora* do loop
             if buscar_dividendos:
                 for ticker in tickers:
+                    # Passar o df_empresas como argumento
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
                         dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
@@ -241,7 +241,7 @@ if st.button('Buscar Dados'):
 
 st.markdown("""
 ---
-**[Fonte dos dados](pplx://action/followup):**
+**[[Fonte dos dados](pplx](pplx://action/followup)://action/followup):**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)

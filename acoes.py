@@ -37,7 +37,7 @@ def get_trading_name(ticker, empresas_df):
         if ticker in row['Tickers']:
             return row['Nome do Pregão']
     raise ValueError('Ticker não encontrado.')
-
+    
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Retorna um DataFrame com dividendos do ticker em questão.

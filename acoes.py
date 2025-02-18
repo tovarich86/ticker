@@ -6,13 +6,14 @@ from base64 import b64encode
 from datetime import datetime, timedelta
 import json
 
-# URL do arquivo no GitHub
-URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
+# URL do arquivo no GitHub (alterado para CSV)
+URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.csv"
 
 @st.cache_data
 def carregar_empresas():
     try:
-        df_empresas = pd.read_excel(URL_EMPRESAS)
+        # Ler o arquivo CSV
+        df_empresas = pd.read_csv(URL_EMPRESAS)
         # Padronizar "Nome do Pregão"
         df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
         return df_empresas
@@ -36,7 +37,7 @@ def get_trading_name(ticker, empresas_df):
     for index, row in empresas_df.iterrows():
         if ticker in row['Tickers']:
             return row['Nome do Pregão']
-    raise ValueError('Ticker não encontrado.')
+    return None  # Retorna None se o ticker não for encontrado
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
@@ -45,14 +46,14 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     Tenta diferentes variações de "Nome do Pregão" se a busca inicial falhar.
     """
     trading_name_variations = []
-    try:
-        trading_name = get_trading_name(ticker, empresas_df)
+    trading_name = get_trading_name(ticker, empresas_df)
+    if trading_name:
         trading_name_variations = [trading_name,
                                    trading_name.replace(" SA", " S.A."),
                                    trading_name.replace(" SA", " S/A"),
                                    trading_name.replace(" SA", " SA.")]
-    except ValueError as e:
-        st.info(f"Ticker não encontrado: {e}")
+    else:
+        st.info(f"Ticker não encontrado: {ticker}")
         return pd.DataFrame()
 
     for trading_name in trading_name_variations:
@@ -195,8 +196,7 @@ if st.button('Buscar Dados'):
                 for ticker in tickers:
                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
                     if not df_dividendos.empty:
-                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
-                # Após buscar dividendos para todos os tickers, exibe os resultados
+                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário... # Após buscar dividendos para todos os tickers, exibe os resultados
                 if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
                     st.write("### Dados de Dividendos por Ticker:")
                     for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos

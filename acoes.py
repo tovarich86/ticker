@@ -201,6 +201,7 @@ if st.button('Buscar Dados'):
                     if not df_dividendos.empty:
                         dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
 
+                # Após buscar dividendos para todos os tickers, exibe os resultados
                 if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
                     st.write("### Dados de Dividendos por Ticker:")
                     for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos

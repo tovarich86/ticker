@@ -110,7 +110,9 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
             st.info(f"Erro ao buscar dividendos para o ticker {ticker} com nome de pregão {trading_name}: {e}")
 
     st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
-    return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação... # Função para buscar dados históricos de ações via yfinance
+    return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação...
+
+# Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """
     Retorna dois dicionários:
@@ -171,12 +173,13 @@ tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PET
 data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
 data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
 buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
+
+# Botão para buscar dados
 formato_excel = st.radio(
     "Escolha o formato do Excel para download:",
     ("Uma aba por ticker", "Agrupar todos os dados em duas abas")
 )
 
-# Botão para buscar dados
 if st.button('Buscar Dados'):
     if tickers_input and data_inicio_input and data_fim_input:
         # Validar as datas de entrada
@@ -207,7 +210,25 @@ if st.button('Buscar Dados'):
             for ticker, df_acao in dados_acoes_dict.items():
                 st.write(f"#### {ticker}")
                 st.dataframe(df_acao)
+
             # -----------------------
+            # DIVIDENDOS (opcional)
+            # -----------------------
+            dados_dividendos_dict = {}  # Inicializa o dicionário *fora* do loop
+            if buscar_dividendos:
+                for ticker in tickers:
+                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
+                    if not df_dividendos.empty:
+                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
+                # Após buscar dividendos para todos os tickers, exibe os resultados
+                if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
+                    st.write("### Dados de Dividendos por Ticker:")
+                    for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_divid)
+                else:
+                    st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
+
             # ------------------------------------------------
             # GERAR EXCEL: opção de formato
             # ------------------------------------------------
@@ -242,9 +263,12 @@ if st.button('Buscar Dados'):
                     data=file,
                     file_name=nome_arquivo
                 )
+    else:
+        st.error("Por favor, preencha todos os campos.")
+
 st.markdown("""
 ---
-**[[Fonte dos dados](pplx](pplx://action/followup)://action/followup):**
+**[[Fonte dos dados](https://www.b3.com.br)]**
 - Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
 - Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
 - Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)

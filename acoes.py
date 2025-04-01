@@ -204,40 +204,32 @@ if st.button('Buscar Dados'):
                 st.write(f"#### {ticker}")
                 st.dataframe(df_acao)
             # -----------------------
-            # DIVIDENDOS (opcional)
-            # -----------------------
-            dados_dividendos_dict = {}  # Inicializa o dicionário *fora* do loop
-            if buscar_dividendos:
-                for ticker in tickers:
-                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
-                    if not df_dividendos.empty:
-                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
-                # Após buscar dividendos para todos os tickers, exibe os resultados
-                if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
-                    st.write("### Dados de Dividendos por Ticker:")
-                    for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos
-                        st.write(f"#### {ticker}")
-                        st.dataframe(df_divid)
-                else:
-                    st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
-
             # ------------------------------------------------
-            # GERAR EXCEL: cada ticker em uma aba diferente
+            # GERAR EXCEL: opção de formato
             # ------------------------------------------------
             nome_arquivo = "dados_acoes_dividendos_.xlsx"
             with pd.ExcelWriter(nome_arquivo) as writer:
-                # 1) Gravar dados de ações (cada ticker em uma aba)
-                for ticker, df_acao in dados_acoes_dict.items():
-                    # sheet_name não pode ter mais de 31 caracteres no Excel,
-                    # então podemos truncar ou simplesmente usar o ticker
-                    sheet_name = f"Acoes_{ticker[:25]}"
-                    df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
+                if formato_excel == "Uma aba por ticker":
+                    # 1) Dados de ações: cada ticker em uma aba
+                    for ticker, df_acao in dados_acoes_dict.items():
+                        sheet_name = f"Acoes_{ticker[:25]}"
+                        df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
 
-                # 2) Se houver dados de dividendos, gravar por ticker também
-                if buscar_dividendos and dados_dividendos_dict:
-                    for ticker, df_divid in dados_dividendos_dict.items():
-                        sheet_name = f"Div_{ticker[:25]}"
-                        df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+                    # 2) Dados de dividendos: cada ticker em uma aba
+                    if buscar_dividendos and dados_dividendos_dict:
+                        for ticker, df_divid in dados_dividendos_dict.items():
+                            sheet_name = f"Div_{ticker[:25]}"
+                            df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                else:  # Agrupar todos os dados em duas abas
+                    # 1) Empilha todos os DataFrames de ações
+                    df_acoes_empilhado = pd.concat(dados_acoes_dict.values(), ignore_index=True)
+                    df_acoes_empilhado.to_excel(writer, sheet_name="Dados_Acoes", index=False)
+
+                    # 2) Empilha os dividendos (se houver)
+                    if buscar_dividendos and dados_dividendos_dict:
+                        df_dividendos_empilhado = pd.concat(dados_dividendos_dict.values(), ignore_index=True)
+                        df_dividendos_empilhado.to_excel(writer, sheet_name="Dados_Dividendos", index=False)
 
             # Botão de download do Excel
             with open(nome_arquivo, 'rb') as file:
@@ -246,9 +238,6 @@ if st.button('Buscar Dados'):
                     data=file,
                     file_name=nome_arquivo
                 )
-    else:
-        st.error("Por favor, preencha todos os campos.")
-
 st.markdown("""
 ---
 **[[Fonte dos dados](pplx](pplx://action/followup)://action/followup):**

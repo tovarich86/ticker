@@ -171,6 +171,10 @@ tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PET
 data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
 data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
 buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
+formato_excel = st.radio(
+    "Escolha o formato do Excel para download:",
+    ("Uma aba por ticker", "Agrupar todos os dados em duas abas")
+)
 
 # Botão para buscar dados
 if st.button('Buscar Dados'):

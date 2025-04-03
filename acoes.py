@@ -180,7 +180,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     except Exception as e:
         st.info(f"Erro ao buscar bonificações para {ticker} com nome '{trading_name}': {e}")
         return pd.DataFrame()
-Explicação das Mudanças:
+#Explicação das Mudanças:
     
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):

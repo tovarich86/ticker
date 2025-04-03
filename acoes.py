@@ -5,10 +5,6 @@ import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
 import json
-
-# URL do arquivo no GitHub
-URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
-
 @st.cache_data
 def carregar_empresas():
     try:
@@ -34,27 +30,6 @@ def get_trading_name(ticker, empresas_df):
     Busca o nome de pregão de um ticker na planilha de empresas.
     Retorna None se o ticker não for encontrado.
     """
-    # Remover números do final do ticker (por exemplo: BHIA3 -> BHIA)
-    ticker_principal = re.sub(r'\d+$', '', ticker).strip()  # Remove números do final
-    
-    for index, row in empresas_df.iterrows():
-        tickers = [t.strip() for t in row['Tickers'].split(",")]
-        if ticker_principal in tickers:
-            return row['Nome do Pregão']
-    return None  # Retorna None se o ticker não for encontrado
-    
-def validar_data(data):
-    try:
-        return pd.to_datetime(datetime.strptime(data, '%d/%m/%Y').date())
-    except ValueError:
-        raise ValueError("Formato de data incorreto, deve ser DD/MM/AAAA")
-
-# Função para buscar nome de pregão usando a API da B3
-def get_trading_name(ticker, empresas_df):
-    """
-    Busca o nome de pregão de um ticker na planilha de empresas.
-    Retorna None se o ticker não for encontrado.
-    """
     for index, row in empresas_df.iterrows():
         tickers = [t.strip() for t in row['Tickers'].split(",")]
         if ticker in tickers:
@@ -67,7 +42,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     Se não encontrar dividendos ou ocorrer erro, retorna DataFrame vazio.
     Tenta diferentes variações de "Nome do Pregão" se a busca inicial falhar.
     """
-    # Verifica se o ticker contém apenas letras (sinalizando ticker internacional)
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Dividendos da B3 não serão buscados.")
         return pd.DataFrame()
@@ -135,7 +109,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
-    Retorna um DataFrame com os eventos encontrados no período, testando variações do nome de pregão.
+    Retorna um DataFrame com os eventos encontrados no período.
     """
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
@@ -206,6 +180,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     except Exception as e:
         st.info(f"Erro ao buscar bonificações para {ticker} com nome '{trading_name}': {e}")
         return pd.DataFrame()
+Explicação das Mudanças:
     
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):

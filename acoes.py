@@ -114,50 +114,62 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
 def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """
-    Ajustada: agora busca bonificações e desdobramentos (stockDividends) da API SupplementCompany da B3.
-    Retorna DataFrame com eventos no período selecionado.
+    Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
+    Retorna um DataFrame com os eventos encontrados no período, testando variações do nome de pregão.
     """
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
         return pd.DataFrame()
 
-    trading_name = get_trading_name(ticker, empresas_df)
-    if trading_name is None:
+    trading_name_base = get_trading_name(ticker, empresas_df)
+    if trading_name_base is None:
         st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()
 
-    try:
-        trading_name = trading_name.strip()
-        params = {
-            "issuingCompany": trading_name,
-            "language": "pt-br"
-        }
-        params_json = json.dumps(params)
-        params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
-        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
+    # Testar múltiplas variações do nome
+    variacoes = [
+        trading_name_base.strip(),
+        trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),
+        trading_name_base.replace(" S/A", " SA").strip(),
+        trading_name_base.replace(" SA", "").strip(),
+        trading_name_base.upper().strip(),
+    ]
 
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
+    for trading_name in variacoes:
+        try:
+            params = {
+                "issuingCompany": trading_name,
+                "language": "pt-br"
+            }
+            params_json = json.dumps(params)
+            params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
+            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
 
-        if not data or not data[0].get("stockDividends"):
-            return pd.DataFrame()
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
 
-        eventos = data[0]["stockDividends"]
-        df = pd.DataFrame(eventos)
+            if not data or not data[0].get("stockDividends"):
+                continue
 
-        if df.empty:
-            return df
+            df = pd.DataFrame(data[0]["stockDividends"])
+            if df.empty:
+                continue
 
-        df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
-        df = df.dropna(subset=['approvedOn'])
-        df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
-        df['Ticker'] = ticker
-        return df
+            df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
+            df = df.dropna(subset=['approvedOn'])
+            df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
+            df['Ticker'] = ticker
 
-    except Exception as e:
-        st.info(f"Erro ao buscar bonificações para {ticker}: {e}")
-        return pd.DataFrame()
+            if not df.empty:
+                return df
+
+        except Exception as e:
+            st.info(f"Erro ao buscar bonificações para {ticker} com nome '{trading_name}': {e}")
+            continue
+
+    # Se nenhuma tentativa funcionar
+    return pd.DataFrame()
 
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):

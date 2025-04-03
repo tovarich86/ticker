@@ -117,74 +117,58 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
     Retorna um DataFrame com os eventos encontrados no período.
     """
-    # Verificar se o ticker é internacional
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
-        return pd.DataFrame()
+        return pd.DataFrame()  # Retorna um DataFrame vazio
 
-    # Usar a coluna CODE da planilha para gerar a URL da subscrição
     try:
-        # Buscar o valor de CODE para o ticker na planilha
+        # Usar a coluna CODE da planilha para gerar a URL da subscrição
         code = empresas_df.loc[empresas_df['Tickers'].str.contains(ticker, case=False), 'CODE'].values[0]
         
-        # Verifica se o código foi encontrado
         if not code:
             st.info(f"Não foi encontrado o código para o ticker {ticker}.")
-            return pd.DataFrame()
-        
-        # Gerar os parâmetros para a consulta de subscrições com o código
+            return pd.DataFrame()  # Retorna um DataFrame vazio se o código não for encontrado
+
         params_subscricoes = {
             "issuingCompany": code,
-            "language": "pt-br"  # O idioma fixo
+            "language": "pt-br"
         }
         
-        # Converter para JSON e depois codificar em base64
         params_subscricoes_json = json.dumps(params_subscricoes)
         params_subscricoes_encoded = b64encode(params_subscricoes_json.encode('utf-8')).decode('utf-8')
         
-        # Gerar a URL para a API
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
-        
-        # Depuração: Exibir a URL gerada
-        #st.write(f"URL gerada para o ticker {ticker}: {url}")  # Exibe a URL gerada para verificar
         
         response = requests.get(url)
 
-        # Verificar o status da resposta
         if response.status_code != 200:
             st.info(f"Erro: Resposta da API para {code} não foi 200 (status {response.status_code}).")
-            return pd.DataFrame()
+            return pd.DataFrame()  # Retorna um DataFrame vazio se a resposta não for 200
 
-        # Verificar se a resposta é válida (não vazia e no formato esperado)
         if not response.content or not response.text.startswith('['):
             st.info(f"Erro: A resposta para {code} está vazia ou inválida.")
-            return pd.DataFrame()
+            return pd.DataFrame()  # Retorna um DataFrame vazio se a resposta for vazia ou inválida
 
-        try:
-            data = response.json()  # Tentativa de conversão para JSON
-        except Exception as e:
-            st.info(f"Erro ao tentar converter resposta para JSON para {code}: {e}")
-            return pd.DataFrame()
+        data = response.json()  # Tenta converter a resposta para JSON
 
         if not data or not data[0].get("stockDividends"):
             st.info(f"Erro: Nenhum dado de bonificação encontrado para {code}.")
-            return pd.DataFrame()
+            return pd.DataFrame()  # Retorna um DataFrame vazio se não encontrar dados
 
         df = pd.DataFrame(data[0]["stockDividends"])
         if df.empty:
-            return pd.DataFrame()
+            return pd.DataFrame()  # Retorna um DataFrame vazio se não houver dados
 
         df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
         df = df.dropna(subset=['approvedOn'])
         df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
         df['Ticker'] = ticker
 
-        if not df.empty:
-            return df
+        return df  # Retorna o DataFrame com os dados
 
     except Exception as e:
         st.info(f"Erro ao buscar bonificações para {ticker} com código '{code}': {e}")
-        return pd.DataFrame()
+        return pd.DataFrame()  # Em caso de erro, retorna um DataFrame vazio
 
 
 # Função para buscar dados históricos de ações via yfinance

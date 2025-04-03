@@ -135,13 +135,16 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
-    Retorna um DataFrame com os eventos encontrados no período.
+    Retorna um DataFrame com os eventos encontrados no período, testando variações do nome de pregão.
     """
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
         return pd.DataFrame()
 
-    trading_name_base = get_trading_name(ticker, empresas_df)
+    # Remover números finais do ticker (como KLBN11, KLBN3, KLBN4 -> KLBN)
+    ticker_principal = re.sub(r'\d+$', '', ticker).strip()  # Remover números do final
+    
+    trading_name_base = get_trading_name(ticker_principal, empresas_df)
     if trading_name_base is None:
         st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()

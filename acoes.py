@@ -114,11 +114,11 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
 def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """
-    Busca subscrições usando a API SupplementCompany da B3.
-    Retorna DataFrame com subscrições no período selecionado.
+    Ajustada: agora busca bonificações e desdobramentos (stockDividends) da API SupplementCompany da B3.
+    Retorna DataFrame com eventos no período selecionado.
     """
     if not any(char.isdigit() for char in ticker):
-        st.info(f"O ticker {ticker} parece ser internacional. Subscrições da B3 não serão buscadas.")
+        st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
         return pd.DataFrame()
 
     trading_name = get_trading_name(ticker, empresas_df)
@@ -127,6 +127,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
     try:
+        trading_name = trading_name.strip()
         params = {
             "issuingCompany": trading_name,
             "language": "pt-br"
@@ -139,11 +140,11 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         response.raise_for_status()
         data = response.json()
 
-        if not data or not data[0].get("subscriptions"):
+        if not data or not data[0].get("stockDividends"):
             return pd.DataFrame()
 
-        subs_list = data[0]["subscriptions"]
-        df = pd.DataFrame(subs_list)
+        eventos = data[0]["stockDividends"]
+        df = pd.DataFrame(eventos)
 
         if df.empty:
             return df
@@ -155,9 +156,8 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         return df
 
     except Exception as e:
-        st.info(f"Erro ao buscar subscrições para {ticker}: {e}")
+        st.info(f"Erro ao buscar bonificações para {ticker}: {e}")
         return pd.DataFrame()
-
 
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):

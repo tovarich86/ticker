@@ -128,12 +128,11 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # Testar múltiplas variações do nome
     variacoes = [
-        trading_name_base.strip(),
-        trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),
-        trading_name_base.replace(" S/A", " SA").strip(),
-        trading_name_base.replace(" SA", "").strip(),
-        trading_name_base.upper().strip(),
-    ]
+    trading_name_base.strip(),  # Nome do pregão original
+    trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
+    trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
+    trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
+    trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo]
 
     for trading_name in variacoes:
         try:

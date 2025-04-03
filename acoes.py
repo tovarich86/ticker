@@ -34,13 +34,15 @@ def get_trading_name(ticker, empresas_df):
     Busca o nome de pregão de um ticker na planilha de empresas.
     Retorna None se o ticker não for encontrado.
     """
+    # Remover números do final do ticker (por exemplo: BHIA3 -> BHIA)
+    ticker_principal = re.sub(r'\d+$', '', ticker).strip()  # Remove números do final
+    
     for index, row in empresas_df.iterrows():
         tickers = [t.strip() for t in row['Tickers'].split(",")]
-        if ticker in tickers:
+        if ticker_principal in tickers:
             return row['Nome do Pregão']
     return None  # Retorna None se o ticker não for encontrado
-
-# Função para validar a data de entrada
+    
 def validar_data(data):
     try:
         return pd.to_datetime(datetime.strptime(data, '%d/%m/%Y').date())
@@ -133,7 +135,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
-    Retorna um DataFrame com os eventos encontrados no período, testando variações do nome de pregão.
+    Retorna um DataFrame com os eventos encontrados no período.
     """
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
@@ -144,9 +146,8 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()
 
-    # Agora, não vamos mais testar variações do nome de pregão.
-    # Vamos usar o nome do pregão exatamente como ele foi encontrado no DataFrame.
-    trading_name = trading_name_base.strip()  # Remover espaços extras
+    # Usar o nome de pregão exato
+    trading_name = trading_name_base.strip()  # Remover espaços extras se houver
 
     try:
         # Gerar os parâmetros para a consulta de subscrições com o nome correto

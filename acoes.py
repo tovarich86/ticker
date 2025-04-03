@@ -13,14 +13,32 @@ URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresa
 def carregar_empresas():
     try:
         df_empresas = pd.read_excel(URL_EMPRESAS)
+        
         # Padronizar "Nome do Pregão"
         df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.replace(r'\s*S\.?A\.?', ' S.A.', regex=True).str.upper()
-        # Converter a coluna 'Tickers' para string
+
+        # Converter a coluna 'Tickers' para string, garantindo que não haja valores nulos
         df_empresas['Tickers'] = df_empresas['Tickers'].astype(str)
+        
+        # Remover espaços extras ao redor dos valores
+        df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.strip()
+        df_empresas['Tickers'] = df_empresas['Tickers'].str.strip()
+        
         return df_empresas
     except Exception as e:
         st.error(f"Erro ao carregar a planilha de empresas: {e}")
         return None
+
+def get_trading_name(ticker, empresas_df):
+    """
+    Busca o nome de pregão de um ticker na planilha de empresas.
+    Retorna None se o ticker não for encontrado.
+    """
+    for index, row in empresas_df.iterrows():
+        tickers = [t.strip() for t in row['Tickers'].split(",")]
+        if ticker in tickers:
+            return row['Nome do Pregão']
+    return None  # Retorna None se o ticker não for encontrado
 
 # Função para validar a data de entrada
 def validar_data(data):

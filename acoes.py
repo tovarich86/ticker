@@ -150,7 +150,10 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
             
             # Gerar a URL para a API
             url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
-
+            
+            # Imprimir a URL gerada para depuração
+            st.write(f"URL gerada: {url}")  # Aqui estamos imprimindo a URL para que você possa verificar
+            
             response = requests.get(url)
 
             # Verificar o status da resposta

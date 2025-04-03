@@ -132,7 +132,8 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
     trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
     trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
-    trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo]
+    trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
+]
 
     for trading_name in variacoes:
         try:

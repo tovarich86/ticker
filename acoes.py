@@ -146,7 +146,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
         
         # Depuração: Exibir a URL gerada
-        st.write(f"URL gerada para o ticker {ticker}: {url}")  # Exibe a URL gerada para verificar
+        #st.write(f"URL gerada para o ticker {ticker}: {url}")  # Exibe a URL gerada para verificar
         
         response = requests.get(url)
 

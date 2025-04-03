@@ -126,14 +126,14 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()
 
-    # Testar múltiplas variações do nome
+    # Testar várias variações do nome do pregão para garantir que a API irá encontrar corretamente
     variacoes = [
-    trading_name_base.strip(),  # Nome do pregão original
-    trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
-    trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
-    trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
-    trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
-]
+        trading_name_base.strip(),  # Nome do pregão original
+        trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
+        trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
+        trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
+        trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
+    ]
 
     for trading_name in variacoes:
         try:
@@ -146,10 +146,25 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
             url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
 
             response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
+
+            # Verificar o status da resposta
+            if response.status_code != 200:
+                st.info(f"Erro: Resposta da API para {trading_name} não foi 200 (status {response.status_code}).")
+                continue
+
+            # Verificar se a resposta é válida (não vazia e no formato esperado)
+            if not response.content or not response.text.startswith('['):
+                st.info(f"Erro: A resposta para {trading_name} está vazia ou inválida.")
+                continue
+
+            try:
+                data = response.json()  # Tentativa de conversão para JSON
+            except Exception as e:
+                st.info(f"Erro ao tentar converter resposta para JSON para {trading_name}: {e}")
+                continue
 
             if not data or not data[0].get("stockDividends"):
+                st.info(f"Erro: Nenhum dado de bonificação encontrado para {trading_name}.")
                 continue
 
             df = pd.DataFrame(data[0]["stockDividends"])

@@ -239,4 +239,142 @@ df_empresas = carregar_empresas()
 
 # Verifica se o DataFrame foi carregado corretamente
 if df_empresas is None:
-    st.error("Erro ao carregar a lista de empresas
+    st.error("Erro ao carregar a lista de empresas. Por favor, verifique a URL e tente novamente.")
+    st.stop()  # Para a execução do script se não conseguir carregar a lista de empresas
+
+# Entrada do usuário
+tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, ^BVSP, IP):")
+data_inicio_input = st.text_input("Digite a data de início (dd/mm/aaaa):")
+data_fim_input = st.text_input("Digite a data de fim (dd/mm/aaaa):")
+buscar_dividendos = st.checkbox("Adicionar os dividendos no período")
+buscar_subscricoes = st.checkbox("Adicionar eventos societários no período")
+
+# Botão para buscar dados
+formato_excel = st.radio(
+    "Escolha o formato do Excel para download:",
+    ("Uma aba por ticker", "Agrupar todos os dados em duas abas")
+)
+
+if st.button('Buscar Dados'):
+    if tickers_input and data_inicio_input and data_fim_input:
+        # Validar as datas de entrada
+        try:
+            data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y")
+            data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y")
+        except ValueError as e:
+            st.error(str(e))
+            st.stop()
+
+        # Obter a lista de tickers
+        tickers = [ticker.strip() for ticker in tickers_input.split(',')]
+
+        # Buscar dados de ações (cada ticker num DF separado)
+        dados_acoes_dict, erros = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
+
+        # Exibir na tela possíveis erros
+        for erro in erros:
+            st.info(erro)
+
+        # Caso não encontre dados de nenhum ticker
+        if not dados_acoes_dict:
+            st.info("Nenhum dado de ações encontrado para os tickers e período especificados.")
+        else:
+            st.write("### Dados de Ações por Ticker:")
+
+            # Mostrar cada DataFrame de ação individualmente no Streamlit
+            for ticker, df_acao in dados_acoes_dict.items():
+                st.write(f"#### {ticker}")
+                st.dataframe(df_acao)
+
+            # -----------------------
+            # DIVIDENDOS (opcional)
+            # -----------------------
+            dados_dividendos_dict = {}  # Inicializa o dicionário *fora* do loop
+            if buscar_dividendos:
+                for ticker in tickers:
+                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio, data_fim)
+                    if not df_dividendos.empty:
+                        dados_dividendos_dict[ticker] = df_dividendos  # Adiciona os dividendos ao dicionário
+                # Após buscar dividendos para todos os tickers, exibe os resultados
+                if dados_dividendos_dict:  # Verifica se algum dividendo foi encontrado
+                    st.write("### Dados de Dividendos por Ticker:")
+                    for ticker, df_divid in dados_dividendos_dict.items():  # Itera sobre o dicionário de dividendos
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_divid)
+                else:
+                    st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
+            # -----------------------
+            # SUBSCRIÇÕES (opcional)
+            # -----------------------
+            dados_subscricoes_dict = {}
+            if buscar_subscricoes:
+                for ticker in tickers:
+                    df_subs = buscar_subscricoes_b3(ticker, df_empresas, data_inicio, data_fim)
+                    if not df_subs.empty:
+                        dados_subscricoes_dict[ticker] = df_subs
+                if dados_subscricoes_dict:
+                    st.write("### Dados de Subscrições por Ticker:")
+                    for ticker, df_sub in dados_subscricoes_dict.items():
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_sub)
+                else:
+                    st.info("Nenhuma subscrição encontrada para os tickers e período especificados.")
+
+
+            # ------------------------------------------------
+            # GERAR EXCEL: opção de formato
+            # ------------------------------------------------
+            nome_arquivo = "dados_acoes_dividendos_.xlsx"
+            with pd.ExcelWriter(nome_arquivo) as writer:
+                if formato_excel == "Uma aba por ticker":
+                    # 1) Dados de ações: cada ticker em uma aba
+                    for ticker, df_acao in dados_acoes_dict.items():
+                        sheet_name = f"Acoes_{ticker[:25]}"
+                        df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                    # 2) Dados de dividendos: cada ticker em uma aba
+                    if buscar_dividendos and dados_dividendos_dict:
+                        for ticker, df_divid in dados_dividendos_dict.items():
+                            sheet_name = f"Div_{ticker[:25]}"
+                            df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    # 3) Subscrições por ticker (se houver)
+                    if buscar_subscricoes and dados_subscricoes_dict:
+                        for ticker, df_sub in dados_subscricoes_dict.items():
+                            sheet_name = f"Subs_{ticker[:25]}"
+                            df_sub.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
+                else:  # Agrupar todos os dados em duas abas
+                    # 1) Empilha todos os DataFrames de ações
+                    df_acoes_empilhado = pd.concat(dados_acoes_dict.values(), ignore_index=True)
+                    df_acoes_empilhado.to_excel(writer, sheet_name="Dados_Acoes", index=False)
+
+                    # 2) Empilha os dividendos (se houver)
+                    if buscar_dividendos and dados_dividendos_dict:
+                        df_dividendos_empilhado = pd.concat(dados_dividendos_dict.values(), ignore_index=True)
+                        df_dividendos_empilhado.to_excel(writer, sheet_name="Dados_Dividendos", index=False)
+                    
+                    # 3) Subscrições agrupadas (se houver)
+                    if buscar_subscricoes and dados_subscricoes_dict:
+                        df_subscricoes_empilhado = pd.concat(dados_subscricoes_dict.values(), ignore_index=True)
+                        df_subscricoes_empilhado.to_excel(writer, sheet_name="Dados_Subscricoes", index=False)
+
+
+            # Botão de download do Excel
+            with open(nome_arquivo, 'rb') as file:
+                st.download_button(
+                    label="Baixar arquivo Excel",
+                    data=file,
+                    file_name=nome_arquivo
+                )
+    else:
+        st.error("Por favor, preencha todos os campos.")
+
+st.markdown("""
+---
+**[[Fonte dos dados](https://www.b3.com.br)]**
+- Dados de ações obtidos de [Yahoo Finance](https://finance.yahoo.com)
+- Dados de dividendos obtidos da [API da B3](https://www.b3.com.br)
+- Código fonte [Github tovarich86](https://github.com/tovarich86/ticker)
+""")

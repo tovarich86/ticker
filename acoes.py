@@ -141,10 +141,14 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
             # Gerar os parâmetros para a consulta de subscrições
             params_subscricoes = {
                 "issuingCompany": trading_name,
-                "language": "pt-br"
+                "language": "pt-br"  # O idioma fixo
             }
+            
+            # Converter para JSON e depois codificar em base64
             params_subscricoes_json = json.dumps(params_subscricoes)
             params_subscricoes_encoded = b64encode(params_subscricoes_json.encode('utf-8')).decode('utf-8')
+            
+            # Gerar a URL para a API
             url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
 
             response = requests.get(url)
@@ -187,6 +191,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # Se nenhuma tentativa funcionar
     return pd.DataFrame()
+    
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """

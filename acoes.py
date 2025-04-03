@@ -124,10 +124,14 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     ticker_principal = re.sub(r'\d+$', '', ticker).strip()  # Remover números do final
     
     trading_name_base = get_trading_name(ticker_principal, empresas_df)
+    
+    # Depuração: Exibir o nome do pregão encontrado
     if trading_name_base is None:
         st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()
-
+    else:
+        st.write(f"Nome de pregão encontrado para {ticker}: {trading_name_base}")
+    
     # Usar o nome de pregão exato
     trading_name = trading_name_base.strip()  # Remover espaços extras se houver
 
@@ -145,8 +149,8 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         # Gerar a URL para a API
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
         
-        # Imprimir a URL gerada para depuração
-        st.write(f"URL gerada para o ticker {ticker}: {url}")  # Aqui estamos imprimindo a URL para que você possa verificar
+        # Depuração: Exibir a URL gerada
+        st.write(f"URL gerada para o ticker {ticker}: {url}")  # Exibe a URL gerada para verificar
         
         response = requests.get(url)
 

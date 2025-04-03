@@ -140,7 +140,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         try:
             # Gerar os parâmetros para a consulta de subscrições
             params_subscricoes = {
-                "issuingCompany": trading_name,
+                "issuingCompany": trading_name.strip(),  # Remover espaços extras ao redor do nome da empresa
                 "language": "pt-br"  # O idioma fixo
             }
             

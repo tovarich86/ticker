@@ -24,6 +24,7 @@ def carregar_empresas():
         # Remover espaços extras ao redor dos valores
         df_empresas['Nome do Pregão'] = df_empresas['Nome do Pregão'].str.strip()
         df_empresas['Tickers'] = df_empresas['Tickers'].str.strip()
+        df_empresas['CODE'] = df_empresas['CODE'].str.strip()  # Adicionando o CODE, removendo espaços extras
         
         return df_empresas
     except Exception as e:
@@ -116,29 +117,24 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
     Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
     Retorna um DataFrame com os eventos encontrados no período.
     """
+    # Verificar se o ticker é internacional
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
         return pd.DataFrame()
 
-    # Remover números finais do ticker (como KLBN11, KLBN3, KLBN4 -> KLBN)
-    ticker_principal = re.sub(r'\d+$', '', ticker).strip()  # Remover números do final
-    
-    trading_name_base = get_trading_name(ticker_principal, empresas_df)
-    
-    # Depuração: Exibir o nome do pregão encontrado
-    if trading_name_base is None:
-        st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
-        return pd.DataFrame()
-    else:
-        st.write(f"Nome de pregão encontrado para {ticker}: {trading_name_base}")
-    
-    # Usar o nome de pregão exato
-    trading_name = trading_name_base.strip()  # Remover espaços extras se houver
-
+    # Usar a coluna CODE da planilha para gerar a URL da subscrição
     try:
-        # Gerar os parâmetros para a consulta de subscrições com o nome correto
+        # Buscar o valor de CODE para o ticker na planilha
+        code = empresas_df.loc[empresas_df['Tickers'].str.contains(ticker, case=False), 'CODE'].values[0]
+        
+        # Verifica se o código foi encontrado
+        if not code:
+            st.info(f"Não foi encontrado o código para o ticker {ticker}.")
+            return pd.DataFrame()
+        
+        # Gerar os parâmetros para a consulta de subscrições com o código
         params_subscricoes = {
-            "issuingCompany": trading_name,
+            "issuingCompany": code,
             "language": "pt-br"  # O idioma fixo
         }
         
@@ -156,22 +152,22 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
         # Verificar o status da resposta
         if response.status_code != 200:
-            st.info(f"Erro: Resposta da API para {trading_name} não foi 200 (status {response.status_code}).")
+            st.info(f"Erro: Resposta da API para {code} não foi 200 (status {response.status_code}).")
             return pd.DataFrame()
 
         # Verificar se a resposta é válida (não vazia e no formato esperado)
         if not response.content or not response.text.startswith('['):
-            st.info(f"Erro: A resposta para {trading_name} está vazia ou inválida.")
+            st.info(f"Erro: A resposta para {code} está vazia ou inválida.")
             return pd.DataFrame()
 
         try:
             data = response.json()  # Tentativa de conversão para JSON
         except Exception as e:
-            st.info(f"Erro ao tentar converter resposta para JSON para {trading_name}: {e}")
+            st.info(f"Erro ao tentar converter resposta para JSON para {code}: {e}")
             return pd.DataFrame()
 
         if not data or not data[0].get("stockDividends"):
-            st.info(f"Erro: Nenhum dado de bonificação encontrado para {trading_name}.")
+            st.info(f"Erro: Nenhum dado de bonificação encontrado para {code}.")
             return pd.DataFrame()
 
         df = pd.DataFrame(data[0]["stockDividends"])
@@ -187,7 +183,7 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
             return df
 
     except Exception as e:
-        st.info(f"Erro ao buscar bonificações para {ticker} com nome '{trading_name}': {e}")
+        st.info(f"Erro ao buscar bonificações para {ticker} com código '{code}': {e}")
         return pd.DataFrame()
 
 

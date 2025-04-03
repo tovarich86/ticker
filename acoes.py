@@ -128,16 +128,18 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # Testar várias variações do nome do pregão para garantir que a API irá encontrar corretamente
     variacoes = [
-    trading_name_base.strip(),  # Nome do pregão original
-    trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
-    trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
-    trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
-    trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
-    trading_name_base.strip().replace(" S.A.", ""),  # Nova variação: sem "S.A." para "WEG"
-]
+        trading_name_base.strip(),  # Nome do pregão original
+        trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
+        trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
+        trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
+        trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
+        trading_name_base.strip().replace(" S.A.", ""),  # Nova variação: sem "S.A." para "WEG"
+    ]
+    
     for trading_name in variacoes:
         try:
-            params = {
+            # Gerar os parâmetros para a consulta de subscrições
+            params_subscricoes = {
                 "issuingCompany": trading_name,
                 "language": "pt-br"
             }
@@ -185,7 +187,6 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # Se nenhuma tentativa funcionar
     return pd.DataFrame()
-
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """

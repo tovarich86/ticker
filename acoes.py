@@ -144,74 +144,64 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()
 
-    # Testar várias variações do nome do pregão para garantir que a API irá encontrar corretamente
-    variacoes = [
-        trading_name_base.strip(),  # Nome do pregão original
-        trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
-        trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
-        trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
-        trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
-        trading_name_base.strip().replace(" S.A.", ""),  # Nova variação: sem "S.A." para "WEG"
-    ]
-    
-    for trading_name in variacoes:
+    # Agora, não vamos mais testar variações do nome de pregão.
+    # Vamos usar o nome do pregão exatamente como ele foi encontrado no DataFrame.
+    trading_name = trading_name_base.strip()  # Remover espaços extras
+
+    try:
+        # Gerar os parâmetros para a consulta de subscrições com o nome correto
+        params_subscricoes = {
+            "issuingCompany": trading_name,
+            "language": "pt-br"  # O idioma fixo
+        }
+        
+        # Converter para JSON e depois codificar em base64
+        params_subscricoes_json = json.dumps(params_subscricoes)
+        params_subscricoes_encoded = b64encode(params_subscricoes_json.encode('utf-8')).decode('utf-8')
+        
+        # Gerar a URL para a API
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
+        
+        # Imprimir a URL gerada para depuração
+        st.write(f"URL gerada: {url}")  # Aqui estamos imprimindo a URL para que você possa verificar
+        
+        response = requests.get(url)
+
+        # Verificar o status da resposta
+        if response.status_code != 200:
+            st.info(f"Erro: Resposta da API para {trading_name} não foi 200 (status {response.status_code}).")
+            return pd.DataFrame()
+
+        # Verificar se a resposta é válida (não vazia e no formato esperado)
+        if not response.content or not response.text.startswith('['):
+            st.info(f"Erro: A resposta para {trading_name} está vazia ou inválida.")
+            return pd.DataFrame()
+
         try:
-            # Gerar os parâmetros para a consulta de subscrições
-            params_subscricoes = {
-                "issuingCompany": trading_name.strip(),  # Remover espaços extras ao redor do nome da empresa
-                "language": "pt-br"  # O idioma fixo
-            }
-            
-            # Converter para JSON e depois codificar em base64
-            params_subscricoes_json = json.dumps(params_subscricoes)
-            params_subscricoes_encoded = b64encode(params_subscricoes_json.encode('utf-8')).decode('utf-8')
-            
-            # Gerar a URL para a API
-            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
-            
-            # Imprimir a URL gerada para depuração
-            st.write(f"URL gerada: {url}")  # Aqui estamos imprimindo a URL para que você possa verificar
-            
-            response = requests.get(url)
-
-            # Verificar o status da resposta
-            if response.status_code != 200:
-                st.info(f"Erro: Resposta da API para {trading_name} não foi 200 (status {response.status_code}).")
-                continue
-
-            # Verificar se a resposta é válida (não vazia e no formato esperado)
-            if not response.content or not response.text.startswith('['):
-                st.info(f"Erro: A resposta para {trading_name} está vazia ou inválida.")
-                continue
-
-            try:
-                data = response.json()  # Tentativa de conversão para JSON
-            except Exception as e:
-                st.info(f"Erro ao tentar converter resposta para JSON para {trading_name}: {e}")
-                continue
-
-            if not data or not data[0].get("stockDividends"):
-                st.info(f"Erro: Nenhum dado de bonificação encontrado para {trading_name}.")
-                continue
-
-            df = pd.DataFrame(data[0]["stockDividends"])
-            if df.empty:
-                continue
-
-            df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
-            df = df.dropna(subset=['approvedOn'])
-            df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
-            df['Ticker'] = ticker
-
-            if not df.empty:
-                return df
-
+            data = response.json()  # Tentativa de conversão para JSON
         except Exception as e:
-            st.info(f"Erro ao buscar bonificações para {ticker} com nome '{trading_name}': {e}")
-            continue
+            st.info(f"Erro ao tentar converter resposta para JSON para {trading_name}: {e}")
+            return pd.DataFrame()
 
-    # Se nenhuma tentativa funcionar
-    return pd.DataFrame()
+        if not data or not data[0].get("stockDividends"):
+            st.info(f"Erro: Nenhum dado de bonificação encontrado para {trading_name}.")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data[0]["stockDividends"])
+        if df.empty:
+            return pd.DataFrame()
+
+        df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['approvedOn'])
+        df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
+        df['Ticker'] = ticker
+
+        if not df.empty:
+            return df
+
+    except Exception as e:
+        st.info(f"Erro ao buscar bonificações para {ticker} com nome '{trading_name}': {e}")
+        return pd.DataFrame()
     
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):

@@ -112,6 +112,53 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     st.info(f"Nenhum dividendo encontrado para o ticker {ticker} com as variações de nome de pregão consultadas.")
     return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação...
 
+def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
+    """
+    Busca subscrições usando a API SupplementCompany da B3.
+    Retorna DataFrame com subscrições no período selecionado.
+    """
+    if not any(char.isdigit() for char in ticker):
+        st.info(f"O ticker {ticker} parece ser internacional. Subscrições da B3 não serão buscadas.")
+        return pd.DataFrame()
+
+    trading_name = get_trading_name(ticker, empresas_df)
+    if trading_name is None:
+        st.info(f"Nome de pregão não encontrado para o ticker {ticker}.")
+        return pd.DataFrame()
+
+    try:
+        params = {
+            "issuingCompany": trading_name,
+            "language": "pt-br"
+        }
+        params_json = json.dumps(params)
+        params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
+
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data or not data[0].get("subscriptions"):
+            return pd.DataFrame()
+
+        subs_list = data[0]["subscriptions"]
+        df = pd.DataFrame(subs_list)
+
+        if df.empty:
+            return df
+
+        df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['approvedOn'])
+        df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
+        df['Ticker'] = ticker
+        return df
+
+    except Exception as e:
+        st.info(f"Erro ao buscar subscrições para {ticker}: {e}")
+        return pd.DataFrame()
+
+
 # Função para buscar dados históricos de ações via yfinance
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """
@@ -228,6 +275,23 @@ if st.button('Buscar Dados'):
                         st.dataframe(df_divid)
                 else:
                     st.info("Nenhum dado de dividendos encontrado para os tickers e período especificados.")
+            # -----------------------
+            # SUBSCRIÇÕES (opcional)
+            # -----------------------
+            dados_subscricoes_dict = {}
+            if buscar_subscricoes:
+                for ticker in tickers:
+                    df_subs = buscar_subscricoes_b3(ticker, df_empresas, data_inicio, data_fim)
+                    if not df_subs.empty:
+                        dados_subscricoes_dict[ticker] = df_subs
+                if dados_subscricoes_dict:
+                    st.write("### Dados de Subscrições por Ticker:")
+                    for ticker, df_sub in dados_subscricoes_dict.items():
+                        st.write(f"#### {ticker}")
+                        st.dataframe(df_sub)
+                else:
+                    st.info("Nenhuma subscrição encontrada para os tickers e período especificados.")
+
 
             # ------------------------------------------------
             # GERAR EXCEL: opção de formato
@@ -245,6 +309,13 @@ if st.button('Buscar Dados'):
                         for ticker, df_divid in dados_dividendos_dict.items():
                             sheet_name = f"Div_{ticker[:25]}"
                             df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    # 3) Subscrições por ticker (se houver)
+                    if buscar_subscricoes and dados_subscricoes_dict:
+                        for ticker, df_sub in dados_subscricoes_dict.items():
+                            sheet_name = f"Subs_{ticker[:25]}"
+                            df_sub.to_excel(writer, sheet_name=sheet_name, index=False)
+
 
                 else:  # Agrupar todos os dados em duas abas
                     # 1) Empilha todos os DataFrames de ações
@@ -255,6 +326,12 @@ if st.button('Buscar Dados'):
                     if buscar_dividendos and dados_dividendos_dict:
                         df_dividendos_empilhado = pd.concat(dados_dividendos_dict.values(), ignore_index=True)
                         df_dividendos_empilhado.to_excel(writer, sheet_name="Dados_Dividendos", index=False)
+                    
+                    # 3) Subscrições agrupadas (se houver)
+                    if buscar_subscricoes and dados_subscricoes_dict:
+                        df_subscricoes_empilhado = pd.concat(dados_subscricoes_dict.values(), ignore_index=True)
+                        df_subscricoes_empilhado.to_excel(writer, sheet_name="Dados_Subscricoes", index=False)
+
 
             # Botão de download do Excel
             with open(nome_arquivo, 'rb') as file:

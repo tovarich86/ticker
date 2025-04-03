@@ -128,13 +128,13 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # Testar várias variações do nome do pregão para garantir que a API irá encontrar corretamente
     variacoes = [
-        trading_name_base.strip(),  # Nome do pregão original
-        trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
-        trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
-        trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
-        trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
-    ]
-
+    trading_name_base.strip(),  # Nome do pregão original
+    trading_name_base.replace(" S.A.", "").replace(" S/A", "").strip(),  # Remover "S.A." ou "S/A"
+    trading_name_base.replace(" S/A", " SA").strip(),  # Substituir "S/A" por "SA"
+    trading_name_base.replace(" SA", "").strip(),  # Remover "SA" (sem a parte de S/A)
+    trading_name_base.upper().strip(),  # Garantir que o nome seja maiúsculo
+    trading_name_base.strip().replace(" S.A.", ""),  # Nova variação: sem "S.A." para "WEG"
+]
     for trading_name in variacoes:
         try:
             params = {

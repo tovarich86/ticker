@@ -141,9 +141,9 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
                 "issuingCompany": trading_name,
                 "language": "pt-br"
             }
-            params_json = json.dumps(params)
-            params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
-            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
+            params_subscricoes_json = json.dumps(params_subscricoes)
+            params_subscricoes_encoded = b64encode(params_subscricoes_json.encode('utf-8')).decode('utf-8')
+            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
 
             response = requests.get(url)
 

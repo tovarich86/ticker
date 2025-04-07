@@ -113,62 +113,58 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     return pd.DataFrame()  # Retorna DataFrame vazio se não encontrar em nenhuma variação...
 
 def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
-    """
-    Função ajustada para buscar bonificações e desdobramentos (stockDividends) usando a API SupplementCompany da B3.
-    Retorna um DataFrame com os eventos encontrados no período.
-    """
     if not any(char.isdigit() for char in ticker):
         st.info(f"O ticker {ticker} parece ser internacional. Eventos de bonificação não serão buscados.")
-        return pd.DataFrame()  # Retorna um DataFrame vazio
+        return pd.DataFrame()
 
+    code = None  # Inicializa a variável aqui
     try:
-        # Usar a coluna CODE da planilha para gerar a URL da subscrição
         code = empresas_df.loc[empresas_df['Tickers'].str.contains(ticker, case=False), 'CODE'].values[0]
         
         if not code:
             st.info(f"Não foi encontrado o código para o ticker {ticker}.")
-            return pd.DataFrame()  # Retorna um DataFrame vazio se o código não for encontrado
+            return pd.DataFrame()
 
+        # Resto do código...
         params_subscricoes = {
             "issuingCompany": code,
             "language": "pt-br"
         }
-        
+
         params_subscricoes_json = json.dumps(params_subscricoes)
         params_subscricoes_encoded = b64encode(params_subscricoes_json.encode('utf-8')).decode('utf-8')
-        
+
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_subscricoes_encoded}'
-        
         response = requests.get(url)
 
         if response.status_code != 200:
             st.info(f"Erro: Resposta da API para {code} não foi 200 (status {response.status_code}).")
-            return pd.DataFrame()  # Retorna um DataFrame vazio se a resposta não for 200
+            return pd.DataFrame()
 
         if not response.content or not response.text.startswith('['):
             st.info(f"Erro: A resposta para {code} está vazia ou inválida.")
-            return pd.DataFrame()  # Retorna um DataFrame vazio se a resposta for vazia ou inválida
+            return pd.DataFrame()
 
-        data = response.json()  # Tenta converter a resposta para JSON
+        data = response.json()
 
         if not data or not data[0].get("stockDividends"):
             st.info(f"Erro: Nenhum dado de bonificação encontrado para {code}.")
-            return pd.DataFrame()  # Retorna um DataFrame vazio se não encontrar dados
+            return pd.DataFrame()
 
         df = pd.DataFrame(data[0]["stockDividends"])
         if df.empty:
-            return pd.DataFrame()  # Retorna um DataFrame vazio se não houver dados
+            return pd.DataFrame()
 
         df['approvedOn'] = pd.to_datetime(df['approvedOn'], format='%d/%m/%Y', errors='coerce')
         df = df.dropna(subset=['approvedOn'])
         df = df[(df['approvedOn'] >= data_inicio) & (df['approvedOn'] <= data_fim)]
         df['Ticker'] = ticker
 
-        return df  # Retorna o DataFrame com os dados
+        return df
 
     except Exception as e:
-        st.info(f"Erro ao buscar bonificações para {ticker} com código '{code}': {e}")
-        return pd.DataFrame()  # Em caso de erro, retorna um DataFrame vazio
+        st.info(f"Erro ao buscar bonificações para {ticker}{f' com código {code}' if code else ''}: {e}")
+        return pd.DataFrame()
 
 
 # Função para buscar dados históricos de ações via yfinance

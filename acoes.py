@@ -99,9 +99,9 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 df = df[cols]
 
             # Convertendo 'dateApproval' para datetime e filtrando por período
-            df['dateApproval'] = pd.to_datetime(df['dateApproval'], format='%d/%m/%Y', errors='coerce')
-            df = df.dropna(subset=['dateApproval'])  # Remove NaT values
-            df = df[(df['dateApproval'] >= data_inicio) & (df['dateApproval'] <= data_fim)]
+            df['lastDatePriorEx'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
+            df = df.dropna(subset=['lastDatePriorEx'])  # Remove valores inválidos
+            df = df[(df['lastDatePriorEx'] >= data_inicio) & (df['lastDatePriorEx'] <= data_fim)]
 
             if not df.empty:
                 return df  # Retorna o DataFrame se encontrar dividendos
@@ -155,9 +155,9 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         if df.empty:
             return pd.DataFrame()
 
-        df['lastDatePriorEx'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
-        df = df.dropna(subset=['lastDatePriorEx'])  # Remove valores inválidos
-        df = df[(df['lastDatePriorEx'] >= data_inicio) & (df['lastDatePriorEx'] <= data_fim)]
+        df['lastDatePrior'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['lastDatePrior'])  # Remove valores inválidos
+        df = df[(df['lastDatePrior'] >= data_inicio) & (df['lastDatePrior'] <= data_fim)]
 
         return df
 

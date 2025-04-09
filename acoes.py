@@ -155,9 +155,11 @@ def buscar_subscricoes_b3(ticker, empresas_df, data_inicio, data_fim):
         if df.empty:
             return pd.DataFrame()
 
+
         df['lastDatePrior'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
         df = df.dropna(subset=['lastDatePrior'])  # Remove valores inválidos
         df = df[(df['lastDatePrior'] >= data_inicio) & (df['lastDatePrior'] <= data_fim)]
+        df['Ticker'] = ticker 
 
         return df
 

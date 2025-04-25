@@ -330,7 +330,7 @@ with col2:
     # Seleção dos tipos de dados a buscar
     tipos_dados_selecionados = st.multiselect(
         "Selecione os dados que deseja buscar:",
-        ["Preços Históricos (Yahoo Finance)", "Dividendos (B3)", "Eventos societários (B3)"],
+        ["Preços(Yahoo Finance)", "Dividendos (B3)", "Eventos societários (B3)"],
         default=["Preços Históricos (Yahoo Finance)"], # Padrão
         key="data_types"
     )

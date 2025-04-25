@@ -144,7 +144,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # Criar DataFrame com todos os resultados
     df = pd.DataFrame(all_dividends)
-
     # --- Filtragem pós-busca ---
     # 1. Filtrar pelo typeStock desejado
     if 'typeStock' in df.columns:
@@ -163,17 +162,26 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     # 3. Converter datas e filtrar pelo período
     if 'lastDatePriorEx' in df.columns:
-        df['lastDatePriorEx'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
-        df = df.dropna(subset=['lastDatePriorEx'])
-        df = df[(df['lastDatePriorEx'] >= data_inicio) & (df['lastDatePriorEx'] <= data_fim)]
+        # Converte para datetime primeiro para garantir o tipo correto antes de filtrar
+        df['lastDatePriorEx_dt'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['lastDatePriorEx_dt']) # Remove linhas com datas inválidas
+        # Filtra usando os objetos datetime
+        df = df[(df['lastDatePriorEx_dt'] >= data_inicio) & (df['lastDatePriorEx_dt'] <= data_fim)]
+        # Remove a coluna datetime temporária se não for mais necessária ou formata a original
+        df = df.drop(columns=['lastDatePriorEx_dt'])
+        # Se precisar da coluna original formatada:
+        # df['lastDatePriorEx'] = df['lastDatePriorEx_dt'].dt.strftime('%d/%m/%Y')
     else:
         st.warning(f"Coluna 'lastDatePriorEx' não encontrada para filtrar datas de dividendos de {ticker}.")
         return pd.DataFrame() # Retorna vazio se não puder filtrar por data
 
     # Reordenar colunas
     if 'Ticker' in df.columns:
-        cols = ['Ticker'] + [col for col in df if col != 'Ticker']
-        df = df[cols]
+        # Garante que todas as colunas originais importantes sejam mantidas
+        cols_to_keep = ['Ticker', 'paymentDate', 'typeStock', 'lastDatePriorEx', 'value', 'relatedToAction', 'label', 'ratio']
+        existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
+        other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
+        df = df[existing_cols_to_keep + other_cols]
 
     if df.empty:
        # st.info(f"Nenhum dividendo encontrado para {ticker} (Tipo: {desired_type_stock}) no período selecionado.")
@@ -204,7 +212,6 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         params_json = json.dumps(params_bonificacoes)
         params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
-
         response = requests.get(url, timeout=30)
         response.raise_for_status()
 
@@ -231,9 +238,15 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         # Adiciona Ticker e filtra por data
         df['Ticker'] = ticker
         if 'lastDatePrior' in df.columns:
-             df['lastDatePrior'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
-             df = df.dropna(subset=['lastDatePrior'])
-             df = df[(df['lastDatePrior'] >= data_inicio) & (df['lastDatePrior'] <= data_fim)]
+             # Converte para datetime para filtro preciso
+             df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
+             df = df.dropna(subset=['lastDatePrior_dt'])
+             # Filtra usando objetos datetime
+             df = df[(df['lastDatePrior_dt'] >= data_inicio) & (df['lastDatePrior_dt'] <= data_fim)]
+             # Remove a coluna temporária
+             df = df.drop(columns=['lastDatePrior_dt'])
+             # Se precisar da coluna original formatada:
+             # df['lastDatePrior'] = df['lastDatePrior_dt'].dt.strftime('%d/%m/%Y')
         else:
              st.warning(f"Coluna 'lastDatePrior' não encontrada para filtrar datas de bonificações de {ticker}.")
              return pd.DataFrame() # Retorna vazio se não puder filtrar data
@@ -241,8 +254,10 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
         # Reordena colunas
         if 'Ticker' in df.columns:
-                cols = ['Ticker'] + [col for col in df if col != 'Ticker']
-                df = df[cols]
+                cols_to_keep = ['Ticker', 'label', 'lastDatePrior', 'factor', 'approvedIn', 'isinCode']
+                existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
+                other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
+                df = df[existing_cols_to_keep + other_cols]
 
 
         return df
@@ -255,13 +270,15 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
 
-# --- Função para buscar dados históricos de ações via yfinance (mantida como antes) ---
+# --- Função para buscar dados históricos de ações via yfinance (AJUSTADA) ---
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    """Busca dados históricos de preços de ações usando yfinance."""
+    """Busca dados históricos de preços de ações usando yfinance, tratando MultiIndex."""
     try:
-        data_inicio = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-        data_fim = datetime.strptime(data_fim_input, "%d/%m/%Y")
-        data_fim_ajustada = (data_fim + timedelta(days=1)).strftime("%Y-%m-%d") # Para incluir a data fim
+        data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
+        # Mantém data_fim como objeto datetime para comparação precisa
+        data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
+        # Adiciona 1 dia para incluir a data final na busca do yfinance
+        data_fim_ajustada_str = (data_fim_dt + timedelta(days=1)).strftime("%Y-%m-%d")
     except ValueError:
         st.error("Formato de data inválido. Use dd/mm/aaaa.")
         return {}, ["Formato de data inválido."]
@@ -272,35 +289,80 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 
     for ticker in tickers_list:
         ticker_yf = ticker # Ticker base
-        # Adiciona '.SA' para tickers brasileiros (regra simples: contém número)
+        # Adiciona '.SA' para tickers brasileiros (regra simples: contém número e não termina com .SA)
         if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA'):
              ticker_yf = ticker + '.SA'
 
         try:
             st.write(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
-            dados = yf.download(ticker_yf, start=data_inicio, end=data_fim_ajustada, auto_adjust=False, progress=False) # auto_adjust=False pode ser importante
+            # Baixa os dados. auto_adjust=False é importante para obter OHLC e Adj Close separados.
+            dados = yf.download(
+                ticker_yf,
+                start=data_inicio_str,
+                end=data_fim_ajustada_str,
+                auto_adjust=False, # Mantém colunas separadas (OHLC, Adj Close, Volume)
+                progress=False
+                # Considerar adicionar: actions=True se precisar de dividendos/splits do yfinance
+            )
 
             if not dados.empty:
-                # Resetar índice para ter 'Date' como coluna
+                # ***** INÍCIO DA CORREÇÃO MULTIINDEX *****
+                # Verifica se as colunas são MultiIndex
+                if isinstance(dados.columns, pd.MultiIndex):
+                    # Achata as colunas pegando o primeiro nível (ex: 'Open', 'High', 'Adj Close')
+                    dados.columns = dados.columns.get_level_values(0)
+                    # Remove colunas duplicadas que podem surgir após achatar (raro)
+                    dados = dados.loc[:,~dados.columns.duplicated()]
+
+                # Garante que o índice se chama 'Date' antes de resetar
+                if dados.index.name is None or dados.index.name.lower() != 'date':
+                    dados.index.name = 'Date'
+
+                # Resetar índice para transformar 'Date' em coluna
                 dados.reset_index(inplace=True)
-                # Formatar Data para dd/mm/aaaa
-                dados['Date'] = pd.to_datetime(dados['Date']).dt.strftime('%d/%m/%Y')
+                # ***** FIM DA CORREÇÃO MULTIINDEX *****
+
+                # Verificar se a coluna 'Date' existe após resetar
+                if 'Date' not in dados.columns:
+                    erros.append(f"Coluna 'Date' não encontrada após processamento para {ticker} ({ticker_yf}).")
+                    continue # Pula para o próximo ticker
+
+                # Converter Date para datetime para filtro e depois formatar
+                dados['Date'] = pd.to_datetime(dados['Date'])
+
+                # Filtrar dados para remover datas fora do intervalo solicitado (<= data_fim_dt)
+                # Isso é necessário porque yf.download(end=...) inclui o dia seguinte até 00:00
+                dados = dados[dados['Date'] <= data_fim_dt]
+
+                # Formatar Data para dd/mm/aaaa APÓS filtrar
+                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
+
                 # Adicionar coluna Ticker (original, sem .SA)
                 dados['Ticker'] = ticker
-                # Reordenar para Ticker ser a primeira coluna
-                cols = ['Ticker', 'Date'] + [col for col in dados.columns if col not in ['Ticker', 'Date']]
-                dados = dados[cols]
-                # Remover linhas onde a data está fora do período original (yf pode trazer dias extras)
-                dados['Date_dt'] = pd.to_datetime(dados['Date'], format='%d/%m/%Y')
-                dados = dados[dados['Date_dt'] <= data_fim]
-                dados = dados.drop(columns=['Date_dt'])
 
+                # Reordenar colunas (garante que colunas padrão existam e venham primeiro)
+                standard_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+                # Garante que Ticker e Date venham primeiro
+                cols_order_start = ['Ticker', 'Date']
+                # Pega as colunas padrão que existem no DataFrame
+                existing_standard_cols = [col for col in standard_cols if col in dados.columns]
+                # Pega outras colunas que possam existir e não estão na lista padrão
+                other_cols = [col for col in dados.columns if col not in cols_order_start and col not in existing_standard_cols]
+                # Junta tudo na ordem desejada
+                final_cols_order = cols_order_start + existing_standard_cols + other_cols
+                dados = dados[final_cols_order]
+
+                # Adiciona o DataFrame processado ao dicionário
                 dados_acoes_dict[ticker] = dados
             else:
-                erros.append(f"Sem dados de preços históricos encontrados para o ticker {ticker} ({ticker_yf}) no período.")
+                erros.append(f"Sem dados de preços históricos encontrados para {ticker} ({ticker_yf}) no período.")
+
         except Exception as e:
-            erros.append(f"Erro ao buscar dados de preços para {ticker} ({ticker_yf}): {e}")
-            continue
+            # Mensagem de erro mais detalhada, incluindo o tipo do erro
+            error_type = type(e).__name__
+            erros.append(f"Erro ao buscar/processar dados de preços para {ticker} ({ticker_yf}): {error_type} - {e}")
+            # st.error(f"Debug: Erro completo para {ticker}: {traceback.format_exc()}") # Descomentar para debug detalhado
+            continue # Continua com o próximo ticker
 
     return dados_acoes_dict, erros
 
@@ -363,7 +425,7 @@ if st.button('Buscar Dados', key="search_button"):
         todos_dados_acoes = {}
         todos_dados_dividendos = {}
         todos_dados_bonificacoes = {}
-        erros_gerais = []
+        erros_gerais = [] # Lista para acumular todos os erros/avisos
 
         # --- Busca de Dados ---
         with st.spinner('Buscando dados... Por favor, aguarde.'):
@@ -373,15 +435,17 @@ if st.button('Buscar Dados', key="search_button"):
                 dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
                 if dados_acoes_dict:
                     todos_dados_acoes = dados_acoes_dict
+                    # Mostra os DFs individuais na tela
                     for ticker, df_acao in todos_dados_acoes.items():
                         st.write(f"**{ticker}**")
-                        st.dataframe(df_acao)
+                        st.dataframe(df_acao.head()) # Mostra só o head para não poluir muito
                 if erros_acoes:
                     erros_gerais.extend(erros_acoes)
+                    # Mostra os erros/avisos de preço imediatamente
                     for erro in erros_acoes:
                         st.warning(erro) # Usar warning para erros não críticos
                 if not dados_acoes_dict and not erros_acoes:
-                     st.info("Nenhum dado de preço histórico encontrado para os tickers/período.")
+                     st.info("Nenhum dado de preço histórico encontrado para os tickers/período via Yahoo Finance.")
 
 
             # 2. Dividendos
@@ -389,17 +453,15 @@ if st.button('Buscar Dados', key="search_button"):
                 st.subheader("2. Dividendos (B3)")
                 dividendos_encontrados_algum_ticker = False
                 for ticker in tickers_list:
-                     # st.write(f"Processando dividendos para: {ticker}") # Feedback
+                     # Passa os objetos datetime para a função de busca
                      df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
                      if not df_dividendos.empty:
                          todos_dados_dividendos[ticker] = df_dividendos
                          dividendos_encontrados_algum_ticker = True
-                         # st.write(f"**{ticker}**") # Não mostra mais individualmente aqui, agrupa no final
-                         # st.dataframe(df_dividendos) # Não mostra mais individualmente aqui
 
                 if dividendos_encontrados_algum_ticker:
-                    st.write("Dividendos encontrados:")
-                    # Exibe todos os dataframes de dividendos concatenados ou por ticker
+                    st.write("Dividendos encontrados (B3):")
+                    # Concatena todos os DFs de dividendos para exibição e download
                     df_dividendos_agrupado = pd.concat(todos_dados_dividendos.values(), ignore_index=True) if todos_dados_dividendos else pd.DataFrame()
                     st.dataframe(df_dividendos_agrupado)
                 else:
@@ -410,40 +472,38 @@ if st.button('Buscar Dados', key="search_button"):
                 st.subheader("3. Bonificações (B3)")
                 bonificacoes_encontradas_algum_ticker = False
                 for ticker in tickers_list:
-                     # st.write(f"Processando bonificações para: {ticker}") # Feedback
+                     # Passa os objetos datetime para a função de busca
                      df_bonificacoes = buscar_bonificacoes_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
                      if not df_bonificacoes.empty:
                          todos_dados_bonificacoes[ticker] = df_bonificacoes
                          bonificacoes_encontradas_algum_ticker = True
-                         # st.write(f"**{ticker}**") # Não mostra mais individualmente aqui
-                         # st.dataframe(df_bonificacoes) # Não mostra mais individualmente aqui
 
                 if bonificacoes_encontradas_algum_ticker:
-                     st.write("Bonificações encontradas:")
+                     st.write("Bonificações encontradas (B3):")
+                     # Concatena todos os DFs de bonificações para exibição e download
                      df_bonificacoes_agrupado = pd.concat(todos_dados_bonificacoes.values(), ignore_index=True) if todos_dados_bonificacoes else pd.DataFrame()
                      st.dataframe(df_bonificacoes_agrupado)
                 else:
                     st.info("Nenhuma bonificação encontrada na B3 para os tickers/período especificados.")
 
-        # --- Exibir Erros Gerais ---
-        # if erros_gerais:
-        #    st.subheader("⚠️ Avisos e Erros")
-        #    for erro in erros_gerais:
-        #        st.warning(erro)
-
         # --- Geração e Download do Excel ---
+        # Verifica se há algum dado para baixar
         if todos_dados_acoes or todos_dados_dividendos or todos_dados_bonificacoes:
-            st.subheader("📥 Download dos Dados")
+            st.subheader("📥 Download dos Dados em Excel")
             formato_excel = st.radio(
-                "Escolha o formato do Excel para download:",
-                ("Agrupar por tipo de dado", "Uma aba por ticker/tipo de dado"),
+                "Escolha o formato do arquivo Excel:",
+                ("Agrupar por tipo de dado (uma aba para Preços, outra para Dividendos, etc.)",
+                 "Separar por ticker e tipo (ex: Precos_PETR4, Div_VALE3, etc.)"),
                 key="excel_format"
             )
 
-            nome_arquivo = f"dados_mercado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            nome_arquivo = f"dados_mercado_{data_inicio_input.replace('/','')}_{data_fim_input.replace('/','')}_{datetime.now().strftime('%H%M')}.xlsx"
             try:
-                with pd.ExcelWriter(nome_arquivo) as writer:
-                    if formato_excel == "Agrupar por tipo de dado":
+                # Usar BytesIO para criar o Excel em memória e evitar salvar arquivo no servidor
+                from io import BytesIO
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer: # Usar xlsxwriter para melhor compatibilidade
+                    if formato_excel.startswith("Agrupar"):
                         if todos_dados_acoes:
                             df_acoes_empilhado = pd.concat(todos_dados_acoes.values(), ignore_index=True)
                             df_acoes_empilhado.to_excel(writer, sheet_name="Precos_Historicos", index=False)
@@ -454,7 +514,7 @@ if st.button('Buscar Dados', key="search_button"):
                             df_bonificacoes_empilhado = pd.concat(todos_dados_bonificacoes.values(), ignore_index=True)
                             df_bonificacoes_empilhado.to_excel(writer, sheet_name="Bonificacoes", index=False)
 
-                    else: # Uma aba por ticker/tipo de dado
+                    else: # Separar por ticker e tipo
                         if todos_dados_acoes:
                             for ticker, df_acao in todos_dados_acoes.items():
                                 sheet_name = f"Precos_{ticker[:25]}" # Limita tamanho do nome da aba
@@ -468,19 +528,21 @@ if st.button('Buscar Dados', key="search_button"):
                                 sheet_name = f"Bonif_{ticker[:25]}"
                                 df_bonif.to_excel(writer, sheet_name=sheet_name, index=False)
 
-                # Botão de download
-                with open(nome_arquivo, 'rb') as file:
-                    st.download_button(
-                        label="Baixar arquivo Excel",
-                        data=file,
-                        file_name=nome_arquivo,
-                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                    )
+                # Prepara os dados para o botão de download
+                excel_data = output.getvalue()
+
+                st.download_button(
+                    label="Baixar arquivo Excel",
+                    data=excel_data,
+                    file_name=nome_arquivo,
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
             except Exception as e:
                  st.error(f"Erro ao gerar o arquivo Excel: {e}")
 
-        elif not erros_gerais:
+        elif not erros_gerais: # Só mostra se não houver dados E não houver erros reportados
              st.info("Nenhum dado encontrado para os critérios selecionados.")
+        # Se houve erros_gerais, eles já foram mostrados como st.warning
 
     else:
         st.warning("Por favor, preencha todos os campos: tickers, datas e selecione ao menos um tipo de dado.")
@@ -490,7 +552,5 @@ st.markdown("""
 ---
 **Fontes dos dados:**
 - Preços Históricos: [Yahoo Finance](https://finance.yahoo.com)
-- Dividendos e Eventos societários: [API B3](https://www.b3.com.br) (via endpoints não oficiais)
-- Mapeamento Ticker/Empresa: Arquivo Excel mantido externamente.
-- Código fonte base: [Github tovarich86](https://github.com/tovarich86/ticker) (modificado)
+- Dividendos e Eventos societários: [API B3](https://www.b3.com.br) 
 """)

@@ -9,6 +9,7 @@ import json
 import re
 import time # Importar para usar time.sleep
 import traceback # Para mostrar erros detalhados
+from io import BytesIO # Para Excel em memória
 
 # URL do arquivo no GitHub
 URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
@@ -49,7 +50,9 @@ def get_ticker_info(ticker, empresas_df):
     Retorna um dicionário com as informações ou None se não encontrado.
     """
     ticker_upper = ticker.strip().upper()
-    for index, row in empresas_df.iterrows():
+    # Iterar sobre as linhas do DataFrame filtrado para maior eficiência
+    filtered_df = empresas_df[empresas_df['Tickers'].str.contains(ticker_upper, case=False, na=False)]
+    for index, row in filtered_df.iterrows():
         # Divide a string de tickers, remove espaços e converte para maiúsculas
         tickers_list = [t.strip().upper() for t in row['Tickers'].split(",") if t.strip()]
         if ticker_upper in tickers_list:
@@ -68,7 +71,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     Retorna um DataFrame com os dividendos filtrados ou DataFrame vazio.
     """
     if not any(char.isdigit() for char in ticker):
-        # Ignora tickers que não parecem ser brasileiros (sem números) para esta busca B3
         return pd.DataFrame()
 
     ticker_info = get_ticker_info(ticker, empresas_df)
@@ -78,7 +80,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
     trading_name = ticker_info.get('trading_name')
-    desired_type_stock = ticker_info.get('type_stock') # Tipo de ação (ON, PN, UNT) do ticker buscado
+    desired_type_stock = ticker_info.get('type_stock')
 
     if not trading_name:
          st.warning(f"Nome pregão não encontrado para {ticker}. Dividendos B3 não buscados.")
@@ -89,10 +91,9 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     all_dividends = []
     current_page = 1
-    total_pages = 1 # Inicializa com 1 para fazer a primeira requisição
-    api_called = False # Flag para saber se a API foi chamada
+    total_pages = 1
+    api_called = False
 
-    # Loop de paginação
     while current_page <= total_pages:
         try:
             api_called = True
@@ -110,10 +111,8 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
             response.raise_for_status()
 
             if not response.content or not response.text.strip():
-                 if current_page == 1:
-                     # st.info(f"Resposta vazia da API de dividendos para {ticker} ({trading_name}) na página 1.")
-                     pass # Silencioso se a primeira página estiver vazia
-                 break # Interrompe se uma página subsequente vier vazia
+                 if current_page == 1: pass
+                 break
 
             try:
                 response_json = response.json()
@@ -121,17 +120,14 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 st.error(f"Erro JSON dividendos B3 para {ticker} (pág {current_page}).")
                 break
 
-            # Atualiza o total de páginas na primeira requisição bem-sucedida
             if current_page == 1 and 'page' in response_json and 'totalPages' in response_json['page']:
                 total_pages = int(response_json['page']['totalPages'])
 
             if 'results' in response_json and response_json['results']:
                 all_dividends.extend(response_json['results'])
             elif current_page == 1:
-                 # Sai se não houver resultados na primeira página
                  break
 
-            # Pausa leve
             if total_pages > 1 and current_page < total_pages:
                  time.sleep(0.3)
 
@@ -145,42 +141,30 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
             break
 
     if not all_dividends:
-        # if api_called: st.info(f"Nenhum dividendo encontrado na B3 para {ticker} ({trading_name}).")
         return pd.DataFrame()
 
-    # Cria DataFrame e inicia filtros
     df = pd.DataFrame(all_dividends)
 
-    # 1. Filtrar pelo typeStock desejado
     if 'typeStock' in df.columns:
          df['typeStock'] = df['typeStock'].astype(str).str.strip().str.upper()
-         df_filtered_type = df[df['typeStock'] == desired_type_stock].copy()
-         if df_filtered_type.empty:
-              # st.info(f"Dividendos B3 para {trading_name} encontrados, mas nenhum do tipo {desired_type_stock} ({ticker}).")
-              return pd.DataFrame()
-         df = df_filtered_type
+         df = df[df['typeStock'] == desired_type_stock].copy()
+         if df.empty: return pd.DataFrame()
     else:
-         st.warning(f"Coluna 'typeStock' não encontrada nos dividendos B3 para {ticker}. Não foi possível filtrar.")
-         # Continua sem filtro de tipo
+         st.warning(f"Coluna 'typeStock' não encontrada nos dividendos B3 para {ticker}.")
 
-    # 2. Adicionar coluna Ticker
     df['Ticker'] = ticker
 
-    # 3. Converter datas e filtrar pelo período
     if 'lastDatePriorEx' in df.columns:
         df['lastDatePriorEx_dt'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
         df = df.dropna(subset=['lastDatePriorEx_dt'])
         df = df[(df['lastDatePriorEx_dt'] >= data_inicio) & (df['lastDatePriorEx_dt'] <= data_fim)]
         df = df.drop(columns=['lastDatePriorEx_dt'])
     else:
-        st.warning(f"Coluna 'lastDatePriorEx' não encontrada dividendos B3 {ticker}. Não foi possível filtrar data.")
+        st.warning(f"Coluna 'lastDatePriorEx' não encontrada dividendos B3 {ticker}.")
         return pd.DataFrame()
 
-    if df.empty:
-        # st.info(f"Nenhum dividendo B3 para {ticker} ({desired_type_stock}) no período selecionado.")
-        return pd.DataFrame()
+    if df.empty: return pd.DataFrame()
 
-    # Reordenar colunas
     cols = ['Ticker'] + [col for col in df.columns if col != 'Ticker']
     df = df[cols]
 
@@ -214,24 +198,18 @@ def buscar_eventos_societarios_b3(ticker, empresas_df, data_inicio, data_fim):
         response.raise_for_status()
 
         if not response.content or not response.text.strip():
-             # st.info(f"Resposta vazia API eventos B3 para {ticker} (CODE: {code}).")
              return pd.DataFrame()
         try:
             data = response.json()
         except json.JSONDecodeError:
-             # st.info(f"Resposta inválida (não JSON) API eventos B3 para {ticker} (CODE: {code}).")
              return pd.DataFrame()
 
-        # Foca em 'stockDividends' que representa bonificações neste endpoint
         if not isinstance(data, list) or not data or "stockDividends" not in data[0] or not data[0]["stockDividends"]:
-            # st.info(f"Nenhum dado de bonificação ('stockDividends') encontrado B3 para {ticker} (CODE: {code}).")
             return pd.DataFrame()
 
         df = pd.DataFrame(data[0]["stockDividends"])
-        if df.empty:
-            return pd.DataFrame()
+        if df.empty: return pd.DataFrame()
 
-        # Adiciona Ticker e filtra por data
         df['Ticker'] = ticker
         if 'lastDatePrior' in df.columns:
              df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
@@ -239,14 +217,11 @@ def buscar_eventos_societarios_b3(ticker, empresas_df, data_inicio, data_fim):
              df = df[(df['lastDatePrior_dt'] >= data_inicio) & (df['lastDatePrior_dt'] <= data_fim)]
              df = df.drop(columns=['lastDatePrior_dt'])
         else:
-             st.warning(f"Coluna 'lastDatePrior' não encontrada eventos B3 {ticker}. Não foi possível filtrar data.")
+             st.warning(f"Coluna 'lastDatePrior' não encontrada eventos B3 {ticker}.")
              return pd.DataFrame()
 
-        if df.empty:
-            # st.info(f"Nenhum evento B3 (bonificação) para {ticker} no período selecionado.")
-            return pd.DataFrame()
+        if df.empty: return pd.DataFrame()
 
-        # Reordena colunas
         cols = ['Ticker'] + [col for col in df.columns if col != 'Ticker']
         df = df[cols]
 
@@ -264,13 +239,9 @@ def buscar_eventos_societarios_b3(ticker, empresas_df, data_inicio, data_fim):
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     """Busca dados históricos de preços de ações usando yfinance."""
     try:
-        # Converte datas de string para datetime objects primeiro
         data_inicio_dt = datetime.strptime(data_inicio_input, "%d/%m/%Y")
         data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
-
-        # Formata para string YYYY-MM-DD para API yfinance
         data_inicio_str = data_inicio_dt.strftime("%Y-%m-%d")
-        # Ajusta data fim para incluir o dia na busca do yfinance
         data_fim_ajustada_str = (data_fim_dt + timedelta(days=1)).strftime("%Y-%m-%d")
     except ValueError:
         st.error("Formato de data inválido para preços. Use dd/mm/aaaa.")
@@ -281,51 +252,33 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     erros = []
 
     for ticker in tickers_list:
-        ticker_yf = ticker # Ticker base
-        # Adiciona '.SA' para tickers brasileiros
+        ticker_yf = ticker
         if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA'):
              ticker_yf = ticker + '.SA'
 
         try:
-            # Feedback removido daqui para não poluir a barra de progresso
-            # st.write(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
-
-            # CORREÇÃO: Adicionado multi_level_index=False
+            # Usando multi_level_index=False
             dados = yf.download(ticker_yf, start=data_inicio_str, end=data_fim_ajustada_str,
                                 auto_adjust=False, progress=False,
-                                multi_level_index=False) # <<< ESSENCIAL PARA EVITAR KeyError
+                                multi_level_index=False)
 
             if not dados.empty:
                 dados.reset_index(inplace=True)
-
-                # Garante que 'Date' é datetime antes de filtrar
                 dados['Date'] = pd.to_datetime(dados['Date'])
-                # Filtra EXATAMENTE pelo período solicitado pelo usuário (usa datetime objects)
                 dados = dados[(dados['Date'] >= data_inicio_dt) & (dados['Date'] <= data_fim_dt)]
 
-                if dados.empty: # Verifica se sobrou algo após o filtro de data
-                    # Não adiciona erro se apenas não houver dados no período exato
-                    # erros.append(f"Sem dados de preços para {ticker} ({ticker_yf}) no período exato.")
-                    continue # Pula para o próximo ticker
+                if dados.empty: continue
 
-                # Formatar Data para dd/mm/aaaa *APÓS* filtrar
                 dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
-
-                # Adicionar coluna Ticker (original, sem .SA)
                 dados['Ticker'] = ticker
-                # Reordenar para Ticker ser a primeira coluna
                 cols = ['Ticker', 'Date'] + [col for col in dados.columns if col not in ['Ticker', 'Date']]
                 dados = dados[cols]
-
                 dados_acoes_dict[ticker] = dados
             else:
-                # Adiciona erro se yfinance não retornou NADA
                  erros.append(f"Sem dados de preços (yfinance) encontrados para {ticker} ({ticker_yf}).")
 
         except Exception as e:
             erros.append(f"Erro ao buscar preços (yfinance) para {ticker} ({ticker_yf}): {e}")
-            # Opcional: Mostrar traceback para depuração
-            # st.error(f"Traceback para {ticker}: {traceback.format_exc()}")
             continue
 
     return dados_acoes_dict, erros
@@ -336,28 +289,23 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 st.set_page_config(layout="wide")
 st.title('Consulta Dados de Mercado B3 e Yahoo Finance')
 
-# --- Carrega o DataFrame de empresas ---
 df_empresas = carregar_empresas()
-
 if df_empresas.empty:
     st.error("Falha ao carregar lista de empresas. Verifique URL/arquivo. Aplicação interrompida.")
     st.stop()
 
-# --- Entradas do Usuário ---
 col1, col2 = st.columns(2)
 with col1:
     tickers_input = st.text_input("Tickers (separados por vírgula):", key="tickers", placeholder="Ex: PETR4, VALE3, MGLU3")
 with col2:
-    # Nomes das opções como definido anteriormente
     tipos_dados_selecionados = st.multiselect(
         "Selecione os dados:",
         ["Preços(YFinance)", "Dividendos (B3)", "Eventos societários (B3)"],
-        default=["Preços(YFinance)"], # Garante que o default está na lista
+        default=["Preços(YFinance)"],
         key="data_types"
     )
 
 col3, col4 = st.columns(2)
-# Usar placeholder para exemplos de data
 today_str = datetime.now().strftime("%d/%m/%Y")
 last_year_str = (datetime.now() - timedelta(days=365)).strftime("%d/%m/%Y")
 with col3:
@@ -365,10 +313,7 @@ with col3:
 with col4:
     data_fim_input = st.text_input("Data de fim (dd/mm/aaaa):", key="date_end", value=today_str)
 
-
-# --- Botão e Lógica Principal ---
 if st.button('Buscar Dados', key="search_button"):
-    # Validações iniciais
     if not tickers_input or not data_inicio_input or not data_fim_input or not tipos_dados_selecionados:
         st.warning("Preencha todos os campos: Tickers, Datas e selecione ao menos um Tipo de Dado.")
         st.stop()
@@ -388,75 +333,54 @@ if st.button('Buscar Dados', key="search_button"):
         st.warning("Nenhum ticker válido fornecido.")
         st.stop()
 
-    # Dicionários para resultados
     todos_dados_precos = {}
     todos_dados_dividendos = {}
     todos_dados_eventos = {}
     erros_gerais = []
 
-    # --- Barra de Progresso e Status ---
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Cálculo preciso do total de passos
     total_steps = 0
-    if "Preços(YFinance)" in tipos_dados_selecionados:
-        total_steps += len(tickers_list) # 1 passo por ticker para yfinance
-    if "Dividendos (B3)" in tipos_dados_selecionados:
-        total_steps += len(tickers_list) # 1 passo por ticker para dividendos
-    if "Eventos societários (B3)" in tipos_dados_selecionados:
-        total_steps += len(tickers_list) # 1 passo por ticker para eventos
-    current_step = 0
+    if "Preços(YFinance)" in tipos_dados_selecionados: total_steps += len(tickers_list)
+    if "Dividendos (B3)" in tipos_dados_selecionados: total_steps += len(tickers_list)
+    if "Eventos societários (B3)" in tipos_dados_selecionados: total_steps += len(tickers_list)
+    
+    current_step = 0 # Definido no mesmo escopo da função abaixo
 
     def update_progress(steps_done=1):
-        nonlocal current_step
+        # nonlocal current_step # <<< REMOVIDA
+        nonlocal current_step # Correção: Necessário para modificar a variável do escopo externo
         current_step += steps_done
         if total_steps > 0:
             progress_bar.progress(min(current_step / total_steps, 1.0))
 
-    # --- Busca de Dados ---
     with st.spinner('Buscando dados...'):
-        # 1. Preços Históricos
         if "Preços(YFinance)" in tipos_dados_selecionados:
             status_text.text(f"Buscando Preços Históricos (Yahoo Finance)...")
             dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
-            if dados_acoes_dict:
-                todos_dados_precos = dados_acoes_dict
-            if erros_acoes:
-                erros_gerais.extend(erros_acoes)
-            update_progress(len(tickers_list)) # Atualiza progresso para todos tickers de uma vez
+            if dados_acoes_dict: todos_dados_precos = dados_acoes_dict
+            if erros_acoes: erros_gerais.extend(erros_acoes)
+            update_progress(len(tickers_list))
 
-
-        # 2. Dividendos B3
         if "Dividendos (B3)" in tipos_dados_selecionados:
-            dividendos_encontrados_algum_ticker = False
             for i, ticker in enumerate(tickers_list):
                  status_text.text(f"Buscando Dividendos (B3) para {ticker} ({i+1}/{len(tickers_list)})...")
                  df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
-                 if not df_dividendos.empty:
-                     todos_dados_dividendos[ticker] = df_dividendos
-                     dividendos_encontrados_algum_ticker = True
-                 update_progress() # Atualiza 1 passo por ticker
+                 if not df_dividendos.empty: todos_dados_dividendos[ticker] = df_dividendos
+                 update_progress()
 
-
-        # 3. Eventos Societários B3
         if "Eventos societários (B3)" in tipos_dados_selecionados:
-            eventos_encontrados_algum_ticker = False
             for i, ticker in enumerate(tickers_list):
                  status_text.text(f"Buscando Eventos Societários (B3) para {ticker} ({i+1}/{len(tickers_list)})...")
-                 # Usando o nome correto da função
                  df_eventos = buscar_eventos_societarios_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
-                 if not df_eventos.empty:
-                     todos_dados_eventos[ticker] = df_eventos
-                     eventos_encontrados_algum_ticker = True
-                 update_progress() # Atualiza 1 passo por ticker
+                 if not df_eventos.empty: todos_dados_eventos[ticker] = df_eventos
+                 update_progress()
 
     status_text.text("Busca concluída!")
     progress_bar.empty()
 
-
-    # --- Exibição dos Resultados Agrupados ---
-    st.markdown("---") # Separador visual
-    dados_exibidos = False # Flag para saber se algo foi exibido
+    st.markdown("---")
+    dados_exibidos = False
 
     if "Preços(YFinance)" in tipos_dados_selecionados:
         st.subheader("1. Preços Históricos (Yahoo Finance)")
@@ -464,7 +388,7 @@ if st.button('Buscar Dados', key="search_button"):
              df_precos_agrupado = pd.concat(todos_dados_precos.values(), ignore_index=True)
              st.dataframe(df_precos_agrupado)
              dados_exibidos = True
-        elif not any("preços (yfinance)" in e.lower() for e in erros_gerais): # Mostra info se não achou e não teve erro *específico* de preço
+        elif not any("preços (yfinance)" in e.lower() for e in erros_gerais):
              st.info("Nenhum dado de preço histórico encontrado para os tickers/período.")
 
     if "Dividendos (B3)" in tipos_dados_selecionados:
@@ -485,15 +409,12 @@ if st.button('Buscar Dados', key="search_button"):
         else:
             st.info("Nenhum evento societário (bonificação) encontrado na B3 para os tickers/período especificados.")
 
-
-    # --- Exibir Erros Gerais ---
     if erros_gerais:
        st.subheader("⚠️ Avisos e Erros")
        for erro in erros_gerais:
            st.warning(erro)
 
-    # --- Geração e Download do Excel ---
-    if dados_exibidos: # Só mostra opção de download se houve dados
+    if dados_exibidos:
         st.subheader("📥 Download dos Dados")
         formato_excel = st.radio(
             "Escolha o formato do Excel:",
@@ -503,25 +424,18 @@ if st.button('Buscar Dados', key="search_button"):
 
         nome_arquivo = f"dados_mercado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         try:
-            # Usar BytesIO para criar o Excel em memória
-            from io import BytesIO
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 if formato_excel == "Agrupar por tipo de dado":
                     if todos_dados_precos:
-                        df_precos_empilhado = pd.concat(todos_dados_precos.values(), ignore_index=True)
-                        df_precos_empilhado.to_excel(writer, sheet_name="Precos_YFinance", index=False)
+                        pd.concat(todos_dados_precos.values(), ignore_index=True).to_excel(writer, sheet_name="Precos_YFinance", index=False)
                     if todos_dados_dividendos:
-                        df_dividendos_empilhado = pd.concat(todos_dados_dividendos.values(), ignore_index=True)
-                        df_dividendos_empilhado.to_excel(writer, sheet_name="Dividendos", index=False)
+                        pd.concat(todos_dados_dividendos.values(), ignore_index=True).to_excel(writer, sheet_name="Dividendos", index=False)
                     if todos_dados_eventos:
-                        df_eventos_empilhado = pd.concat(todos_dados_eventos.values(), ignore_index=True)
-                        df_eventos_empilhado.to_excel(writer, sheet_name="Eventos_Societarios", index=False)
-
-                else: # Uma aba por ticker/tipo
+                        pd.concat(todos_dados_eventos.values(), ignore_index=True).to_excel(writer, sheet_name="Eventos_Societarios", index=False)
+                else:
                     if todos_dados_precos:
                         for ticker, df_acao in todos_dados_precos.items():
-                            # Limita nome da aba e remove caracteres inválidos
                             sheet_name = re.sub(r'[\[\]\*:\\\?\/]', '', f"Precos_{ticker}")[:31]
                             df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
                     if todos_dados_dividendos:
@@ -532,23 +446,20 @@ if st.button('Buscar Dados', key="search_button"):
                         for ticker, df_ev in todos_dados_eventos.items():
                             sheet_name = re.sub(r'[\[\]\*:\\\?\/]', '', f"Eventos_{ticker}")[:31]
                             df_ev.to_excel(writer, sheet_name=sheet_name, index=False)
-            # O writer é fechado automaticamente ao sair do 'with'
 
-            # Botão de download usando os bytes
             st.download_button(
                 label="Baixar arquivo Excel",
-                data=output.getvalue(), # Pega os bytes do BytesIO
+                data=output.getvalue(),
                 file_name=nome_arquivo,
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
         except Exception as e:
              st.error(f"Erro ao gerar o arquivo Excel: {e}")
-             st.error(traceback.format_exc()) # Mostra mais detalhes do erro
+             st.error(traceback.format_exc())
 
-    elif not erros_gerais: # Se não exibiu dados E não teve erros
+    elif not erros_gerais:
          st.info("Nenhum dado encontrado para os critérios selecionados.")
 
-# --- Rodapé ---
 st.markdown("""
 ---
 **Fontes:** Yahoo Finance (Preços), API B3 (Dividendos, Eventos). Mapeamento via Excel externo.

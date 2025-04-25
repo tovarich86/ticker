@@ -181,12 +181,12 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     return df
 
-# --- Função de Busca de Bonificações (Eventos Societários) ---
+# --- Função de Busca de cações (Eventos Societários) ---
 # Renomeada para clareza
-def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
-    """Busca eventos de bonificação (stock dividends) na B3 usando o CODE da empresa."""
+def buscar_cacoes_b3(ticker, empresas_df, data_inicio, data_fim):
+    """Busca eventos de cação (stock dividends) na B3 usando o CODE da empresa."""
     if not any(char.isdigit() for char in ticker):
-        # st.info(f"Ticker {ticker}: Parece internacional, bonificações da B3 não serão buscadas.")
+        # st.info(f"Ticker {ticker}: Parece internacional, eventos societários da B3 não serão buscadas.")
         return pd.DataFrame()
 
     ticker_info = get_ticker_info(ticker, empresas_df)
@@ -330,7 +330,7 @@ with col2:
     # Seleção dos tipos de dados a buscar
     tipos_dados_selecionados = st.multiselect(
         "Selecione os dados que deseja buscar:",
-        ["Preços Históricos (Yahoo Finance)", "Dividendos (B3)", "Bonificações (B3)"],
+        ["Preços Históricos (Yahoo Finance)", "Dividendos (B3)", "Eventos societários (B3)"],
         default=["Preços Históricos (Yahoo Finance)"], # Padrão
         key="data_types"
     )

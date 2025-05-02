@@ -270,6 +270,27 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
 
+# Importa curl_cffi para criar sessão com fingerprint de navegador
+from curl_cffi import requests as curl_requests
+from requests.cookies import create_cookie
+import yfinance.data as _data
+
+# Patch para cookies do yfinance
+def _wrap_cookie(cookie, session):
+    if isinstance(cookie, str):
+        value = session.cookies.get(cookie)
+        return create_cookie(name=cookie, value=value)
+    return cookie
+
+def patch_yfdata_cookie_basic():
+    original = _data.YfData._get_cookie_basic
+    def _patched(self, timeout=30):
+        cookie = original(self, timeout)
+        return _wrap_cookie(cookie, self._session)
+    _data.YfData._get_cookie_basic = _patched
+
+patch_yfdata_cookie_basic()
+
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None):
     try:
         data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
@@ -284,7 +305,9 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
     dados_acoes_dict = {}
     erros = []
 
-    # Baixa todos os tickers de uma vez
+    # Cria sessão curl_cffi com fingerprint de navegador Chrome
+    session = curl_requests.Session(impersonate="chrome")
+
     try:
         if st:
             st.write(f"Buscando preços históricos para {', '.join(tickers_list)}...")
@@ -299,13 +322,13 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
             start=data_inicio_str,
             end=data_fim_ajustada_str,
             auto_adjust=False,
-            progress=False
+            progress=False,
+            session=session  # Passa a sessão personalizada para o yfinance
         )
     except Exception as e:
         error_type = type(e).__name__
         return {}, [f"Erro ao baixar dados de preços: {error_type} - {e}"]
 
-    # Se múltiplos tickers, dados.columns será MultiIndex
     for idx, ticker in enumerate(tickers_list):
         ticker_yf = tickers_yf[idx]
         try:
@@ -320,12 +343,10 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
 
             if not dados_ticker.empty:
                 dados_ticker = dados_ticker.reset_index()
-                # Filtra datas
                 dados_ticker = dados_ticker[dados_ticker['Date'] <= data_fim_dt]
                 dados_ticker['Date'] = pd.to_datetime(dados_ticker['Date']).dt.strftime('%d/%m/%Y')
                 dados_ticker['Ticker'] = ticker
 
-                # Reorganiza colunas
                 standard_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
                 cols_order_start = ['Ticker', 'Date']
                 existing_standard_cols = [col for col in standard_cols if col in dados_ticker.columns]
@@ -341,7 +362,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
             erros.append(f"Erro ao processar dados de preços para {ticker} ({ticker_yf}): {error_type} - {e}")
 
     return dados_acoes_dict, erros
-
 
 # ============================================
 # Interface do Streamlit

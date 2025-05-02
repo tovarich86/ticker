@@ -270,15 +270,20 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
 
-# --- Função para buscar dados históricos de ações via yfinance (AJUSTADA) ---
-def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    """Busca dados históricos de preços de ações usando yfinance, evitando MultiIndex."""
+def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None):
+    """
+    Busca dados históricos de preços de ações usando yfinance, evitando MultiIndex.
+    tickers_input: string com tickers separados por vírgula (ex: "VALE3, PETR4")
+    data_inicio_input, data_fim_input: datas no formato "dd/mm/aaaa"
+    st: objeto Streamlit opcional para mostrar mensagens (pode ser None para uso em Colab)
+    """
     try:
         data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
         data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
         data_fim_ajustada_str = (data_fim_dt + timedelta(days=1)).strftime("%Y-%m-%d")
     except ValueError:
-        st.error("Formato de data inválido. Use dd/mm/aaaa.")
+        if st:
+            st.error("Formato de data inválido. Use dd/mm/aaaa.")
         return {}, ["Formato de data inválido."]
 
     tickers_list = [ticker.strip().upper() for ticker in tickers_input.split(',') if ticker.strip()]
@@ -288,30 +293,27 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     for ticker in tickers_list:
         ticker_yf = ticker
         if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA'):
-             ticker_yf = ticker + '.SA'
+            ticker_yf = ticker + '.SA'
 
         try:
-            st.write(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
+            if st:
+                st.write(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
+            else:
+                print(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
+
             dados = yf.download(
                 ticker_yf,
                 start=data_inicio_str,
                 end=data_fim_ajustada_str,
                 auto_adjust=False,
-                progress=False,
-                multi_level_index=False # <--- ADICIONADO: Evita o MultiIndex na origem [6]
+                progress=False
             )
 
             if not dados.empty:
-                # ***** TRATAMENTO SIMPLIFICADO *****
-                # O DataFrame 'dados' agora deve ter colunas simples ('Open', 'High', etc.)
-
-                # Garante que o índice se chama 'Date' antes de resetar (ainda útil) [3]
+                # Garante que o índice se chama 'Date' antes de resetar
                 if dados.index.name is None or dados.index.name.lower() != 'date':
                     dados.index.name = 'Date'
-
-                # Resetar índice para transformar 'Date' em coluna
                 dados.reset_index(inplace=True)
-                # ***** FIM DO TRATAMENTO SIMPLIFICADO *****
 
                 # Verificar se a coluna 'Date' existe após resetar
                 if 'Date' not in dados.columns:
@@ -320,17 +322,13 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
 
                 # Converter Date para datetime para filtro e depois formatar
                 dados['Date'] = pd.to_datetime(dados['Date'])
-
-                # Filtrar dados para remover datas fora do intervalo solicitado (<= data_fim_dt)
                 dados = dados[dados['Date'] <= data_fim_dt]
-
-                # Formatar Data para dd/mm/aaaa APÓS filtrar
                 dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
 
                 # Adicionar coluna Ticker
                 dados['Ticker'] = ticker
 
-                # Reordenar colunas (lógica mantida)
+                # Reordenar colunas
                 standard_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
                 cols_order_start = ['Ticker', 'Date']
                 existing_standard_cols = [col for col in standard_cols if col in dados.columns]

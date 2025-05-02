@@ -271,12 +271,6 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
 
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None):
-    """
-    Busca dados históricos de preços de ações usando yfinance, evitando MultiIndex.
-    tickers_input: string com tickers separados por vírgula (ex: "VALE3, PETR4")
-    data_inicio_input, data_fim_input: datas no formato "dd/mm/aaaa"
-    st: objeto Streamlit opcional para mostrar mensagens (pode ser None para uso em Colab)
-    """
     try:
         data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
         data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
@@ -290,61 +284,61 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
     dados_acoes_dict = {}
     erros = []
 
-    for ticker in tickers_list:
-        ticker_yf = ticker
-        if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA'):
-            ticker_yf = ticker + '.SA'
+    # Baixa todos os tickers de uma vez
+    try:
+        if st:
+            st.write(f"Buscando preços históricos para {', '.join(tickers_list)}...")
+        else:
+            print(f"Buscando preços históricos para {', '.join(tickers_list)}...")
 
+        # Adiciona .SA se necessário
+        tickers_yf = [ticker + '.SA' if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA') else ticker for ticker in tickers_list]
+
+        dados = yf.download(
+            tickers=tickers_yf,
+            start=data_inicio_str,
+            end=data_fim_ajustada_str,
+            auto_adjust=False,
+            progress=False
+        )
+    except Exception as e:
+        error_type = type(e).__name__
+        return {}, [f"Erro ao baixar dados de preços: {error_type} - {e}"]
+
+    # Se múltiplos tickers, dados.columns será MultiIndex
+    for idx, ticker in enumerate(tickers_list):
+        ticker_yf = tickers_yf[idx]
         try:
-            if st:
-                st.write(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
-            else:
-                print(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
-
-            dados = yf.download(
-                ticker_yf,
-                start=data_inicio_str,
-                end=data_fim_ajustada_str,
-                auto_adjust=False,
-                progress=False
-            )
-
-            if not dados.empty:
-                # Garante que o índice se chama 'Date' antes de resetar
-                if dados.index.name is None or dados.index.name.lower() != 'date':
-                    dados.index.name = 'Date'
-                dados.reset_index(inplace=True)
-
-                # Verificar se a coluna 'Date' existe após resetar
-                if 'Date' not in dados.columns:
-                    erros.append(f"Coluna 'Date' não encontrada após processamento para {ticker} ({ticker_yf}).")
+            if isinstance(dados.columns, pd.MultiIndex):
+                # Extrai os dados desse ticker
+                if ticker_yf not in dados.columns.levels[1]:
+                    erros.append(f"Nenhum dado encontrado para {ticker} ({ticker_yf}).")
                     continue
+                dados_ticker = dados.xs(key=ticker_yf, axis=1, level=1)
+            else:
+                dados_ticker = dados.copy()
 
-                # Converter Date para datetime para filtro e depois formatar
-                dados['Date'] = pd.to_datetime(dados['Date'])
-                dados = dados[dados['Date'] <= data_fim_dt]
-                dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
+            if not dados_ticker.empty:
+                dados_ticker = dados_ticker.reset_index()
+                # Filtra datas
+                dados_ticker = dados_ticker[dados_ticker['Date'] <= data_fim_dt]
+                dados_ticker['Date'] = pd.to_datetime(dados_ticker['Date']).dt.strftime('%d/%m/%Y')
+                dados_ticker['Ticker'] = ticker
 
-                # Adicionar coluna Ticker
-                dados['Ticker'] = ticker
-
-                # Reordenar colunas
+                # Reorganiza colunas
                 standard_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
                 cols_order_start = ['Ticker', 'Date']
-                existing_standard_cols = [col for col in standard_cols if col in dados.columns]
-                other_cols = [col for col in dados.columns if col not in cols_order_start and col not in existing_standard_cols]
+                existing_standard_cols = [col for col in standard_cols if col in dados_ticker.columns]
+                other_cols = [col for col in dados_ticker.columns if col not in cols_order_start and col not in existing_standard_cols]
                 final_cols_order = cols_order_start + existing_standard_cols + other_cols
-                dados = dados[final_cols_order]
+                dados_ticker = dados_ticker[final_cols_order]
 
-                # Adiciona o DataFrame processado ao dicionário
-                dados_acoes_dict[ticker] = dados
+                dados_acoes_dict[ticker] = dados_ticker
             else:
                 erros.append(f"Sem dados de preços históricos encontrados para {ticker} ({ticker_yf}) no período.")
-
         except Exception as e:
             error_type = type(e).__name__
-            erros.append(f"Erro ao buscar/processar dados de preços para {ticker} ({ticker_yf}): {error_type} - {e}")
-            continue
+            erros.append(f"Erro ao processar dados de preços para {ticker} ({ticker_yf}): {error_type} - {e}")
 
     return dados_acoes_dict, erros
 

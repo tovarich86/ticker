@@ -272,12 +272,10 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
 # --- Função para buscar dados históricos de ações via yfinance (AJUSTADA) ---
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
-    """Busca dados históricos de preços de ações usando yfinance, tratando MultiIndex."""
+    """Busca dados históricos de preços de ações usando yfinance, evitando MultiIndex."""
     try:
         data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
-        # Mantém data_fim como objeto datetime para comparação precisa
         data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
-        # Adiciona 1 dia para incluir a data final na busca do yfinance
         data_fim_ajustada_str = (data_fim_dt + timedelta(days=1)).strftime("%Y-%m-%d")
     except ValueError:
         st.error("Formato de data inválido. Use dd/mm/aaaa.")
@@ -288,67 +286,55 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
     erros = []
 
     for ticker in tickers_list:
-        ticker_yf = ticker # Ticker base
-        # Adiciona '.SA' para tickers brasileiros (regra simples: contém número e não termina com .SA)
+        ticker_yf = ticker
         if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA'):
              ticker_yf = ticker + '.SA'
 
         try:
             st.write(f"Buscando preços históricos para {ticker} ({ticker_yf})...")
-            # Baixa os dados. auto_adjust=False é importante para obter OHLC e Adj Close separados.
             dados = yf.download(
                 ticker_yf,
                 start=data_inicio_str,
                 end=data_fim_ajustada_str,
-                auto_adjust=False, # Mantém colunas separadas (OHLC, Adj Close, Volume)
-                progress=False
-                # Considerar adicionar: actions=True se precisar de dividendos/splits do yfinance
+                auto_adjust=False,
+                progress=False,
+                multi_level_index=False # <--- ADICIONADO: Evita o MultiIndex na origem [6]
             )
 
             if not dados.empty:
-                # ***** INÍCIO DA CORREÇÃO MULTIINDEX *****
-                # Verifica se as colunas são MultiIndex
-                if isinstance(dados.columns, pd.MultiIndex):
-                    # Achata as colunas pegando o primeiro nível (ex: 'Open', 'High', 'Adj Close')
-                    dados.columns = dados.columns.get_level_values(0)
-                    # Remove colunas duplicadas que podem surgir após achatar (raro)
-                    dados = dados.loc[:,~dados.columns.duplicated()]
+                # ***** TRATAMENTO SIMPLIFICADO *****
+                # O DataFrame 'dados' agora deve ter colunas simples ('Open', 'High', etc.)
 
-                # Garante que o índice se chama 'Date' antes de resetar
+                # Garante que o índice se chama 'Date' antes de resetar (ainda útil) [3]
                 if dados.index.name is None or dados.index.name.lower() != 'date':
                     dados.index.name = 'Date'
 
                 # Resetar índice para transformar 'Date' em coluna
                 dados.reset_index(inplace=True)
-                # ***** FIM DA CORREÇÃO MULTIINDEX *****
+                # ***** FIM DO TRATAMENTO SIMPLIFICADO *****
 
                 # Verificar se a coluna 'Date' existe após resetar
                 if 'Date' not in dados.columns:
                     erros.append(f"Coluna 'Date' não encontrada após processamento para {ticker} ({ticker_yf}).")
-                    continue # Pula para o próximo ticker
+                    continue
 
                 # Converter Date para datetime para filtro e depois formatar
                 dados['Date'] = pd.to_datetime(dados['Date'])
 
                 # Filtrar dados para remover datas fora do intervalo solicitado (<= data_fim_dt)
-                # Isso é necessário porque yf.download(end=...) inclui o dia seguinte até 00:00
                 dados = dados[dados['Date'] <= data_fim_dt]
 
                 # Formatar Data para dd/mm/aaaa APÓS filtrar
                 dados['Date'] = dados['Date'].dt.strftime('%d/%m/%Y')
 
-                # Adicionar coluna Ticker (original, sem .SA)
+                # Adicionar coluna Ticker
                 dados['Ticker'] = ticker
 
-                # Reordenar colunas (garante que colunas padrão existam e venham primeiro)
+                # Reordenar colunas (lógica mantida)
                 standard_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-                # Garante que Ticker e Date venham primeiro
                 cols_order_start = ['Ticker', 'Date']
-                # Pega as colunas padrão que existem no DataFrame
                 existing_standard_cols = [col for col in standard_cols if col in dados.columns]
-                # Pega outras colunas que possam existir e não estão na lista padrão
                 other_cols = [col for col in dados.columns if col not in cols_order_start and col not in existing_standard_cols]
-                # Junta tudo na ordem desejada
                 final_cols_order = cols_order_start + existing_standard_cols + other_cols
                 dados = dados[final_cols_order]
 
@@ -358,13 +344,12 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input):
                 erros.append(f"Sem dados de preços históricos encontrados para {ticker} ({ticker_yf}) no período.")
 
         except Exception as e:
-            # Mensagem de erro mais detalhada, incluindo o tipo do erro
             error_type = type(e).__name__
             erros.append(f"Erro ao buscar/processar dados de preços para {ticker} ({ticker_yf}): {error_type} - {e}")
-            # st.error(f"Debug: Erro completo para {ticker}: {traceback.format_exc()}") # Descomentar para debug detalhado
-            continue # Continua com o próximo ticker
+            continue
 
     return dados_acoes_dict, erros
+
 
 # ============================================
 # Interface do Streamlit

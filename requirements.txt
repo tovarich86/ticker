@@ -4,3 +4,4 @@ pandas
 openpyxl
 arch
 xlsxwriter
+curl_cffi

@@ -401,148 +401,143 @@ with col4:
     data_fim_input = st.text_input("Data de fim (dd/mm/aaaa):", key="date_end")
 
 
+# --- Inicialização do Session State ---
+# Garante que as variáveis existem desde o início para evitar erros.
+if 'dados_buscados' not in st.session_state:
+    st.session_state.dados_buscados = False
+    st.session_state.todos_dados_acoes = {}
+    st.session_state.todos_dados_dividendos = {}
+    st.session_state.todos_dados_bonificacoes = {}
+    st.session_state.erros_gerais = []
+
+
 # --- Botão e Lógica Principal ---
 if st.button('Buscar Dados', key="search_button"):
+    # Reseta o estado a cada nova busca
+    st.session_state.dados_buscados = False
+    st.session_state.todos_dados_acoes = {}
+    st.session_state.todos_dados_dividendos = {}
+    st.session_state.todos_dados_bonificacoes = {}
+    st.session_state.erros_gerais = []
+
     if tickers_input and data_inicio_input and data_fim_input and tipos_dados_selecionados:
-        # Validar formato das datas
         try:
             data_inicio_dt = datetime.strptime(data_inicio_input, "%d/%m/%Y")
             data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
             if data_inicio_dt > data_fim_dt:
-                 st.error("A data de início não pode ser posterior à data de fim.")
-                 st.stop()
+                st.error("A data de início não pode ser posterior à data de fim.")
+                st.stop()
         except ValueError:
             st.error("Formato de data inválido. Use dd/mm/aaaa.")
             st.stop()
 
-        # Limpa e obtém a lista de tickers únicos
         tickers_list = sorted(list(set([ticker.strip().upper() for ticker in tickers_input.split(',') if ticker.strip()])))
 
-        # Dicionários para armazenar os resultados por tipo de dado
-        todos_dados_acoes = {}
-        todos_dados_dividendos = {}
-        todos_dados_bonificacoes = {}
-        erros_gerais = [] # Lista para acumular todos os erros/avisos
-
-        # --- Busca de Dados ---
         with st.spinner('Buscando dados... Por favor, aguarde.'):
             # 1. Preços Históricos
             if "Preços Históricos (Yahoo Finance)" in tipos_dados_selecionados:
-                st.subheader("1. Preços Históricos (Yahoo Finance)")
                 dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
                 if dados_acoes_dict:
-                    todos_dados_acoes = dados_acoes_dict
-                    # Mostra os DFs individuais na tela
-                    for ticker, df_acao in todos_dados_acoes.items():
-                        st.write(f"**{ticker}**")
-                        st.dataframe(df_acao.head()) # Mostra só o head para não poluir muito
+                    st.session_state.todos_dados_acoes = dados_acoes_dict
                 if erros_acoes:
-                    erros_gerais.extend(erros_acoes)
-                    # Mostra os erros/avisos de preço imediatamente
-                    for erro in erros_acoes:
-                        st.warning(erro) # Usar warning para erros não críticos
-                if not dados_acoes_dict and not erros_acoes:
-                     st.info("Nenhum dado de preço histórico encontrado para os tickers/período via Yahoo Finance.")
-
+                    st.session_state.erros_gerais.extend(erros_acoes)
 
             # 2. Dividendos
             if "Dividendos (B3)" in tipos_dados_selecionados:
-                st.subheader("2. Dividendos (B3)")
-                dividendos_encontrados_algum_ticker = False
+                dividendos_temp = {}
                 for ticker in tickers_list:
-                     # Passa os objetos datetime para a função de busca
-                     df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
-                     if not df_dividendos.empty:
-                         todos_dados_dividendos[ticker] = df_dividendos
-                         dividendos_encontrados_algum_ticker = True
-
-                if dividendos_encontrados_algum_ticker:
-                    st.write("Dividendos encontrados (B3):")
-                    # Concatena todos os DFs de dividendos para exibição e download
-                    df_dividendos_agrupado = pd.concat(todos_dados_dividendos.values(), ignore_index=True) if todos_dados_dividendos else pd.DataFrame()
-                    st.dataframe(df_dividendos_agrupado)
-                else:
-                    st.info("Nenhum dado de dividendo encontrado na B3 para os tickers/período/tipo de ação especificados.")
+                    df_dividendos = buscar_dividendos_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
+                    if not df_dividendos.empty:
+                        dividendos_temp[ticker] = df_dividendos
+                st.session_state.todos_dados_dividendos = dividendos_temp
 
             # 3. Bonificações
             if "Bonificações (B3)" in tipos_dados_selecionados:
-                st.subheader("3. Bonificações (B3)")
-                bonificacoes_encontradas_algum_ticker = False
+                bonificacoes_temp = {}
                 for ticker in tickers_list:
-                     # Passa os objetos datetime para a função de busca
-                     df_bonificacoes = buscar_bonificacoes_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
-                     if not df_bonificacoes.empty:
-                         todos_dados_bonificacoes[ticker] = df_bonificacoes
-                         bonificacoes_encontradas_algum_ticker = True
-
-                if bonificacoes_encontradas_algum_ticker:
-                     st.write("Bonificações encontradas (B3):")
-                     # Concatena todos os DFs de bonificações para exibição e download
-                     df_bonificacoes_agrupado = pd.concat(todos_dados_bonificacoes.values(), ignore_index=True) if todos_dados_bonificacoes else pd.DataFrame()
-                     st.dataframe(df_bonificacoes_agrupado)
-                else:
-                    st.info("Nenhuma bonificação encontrada na B3 para os tickers/período especificados.")
-
-        # --- Geração e Download do Excel ---
-        # Verifica se há algum dado para baixar
-        if todos_dados_acoes or todos_dados_dividendos or todos_dados_bonificacoes:
-            st.subheader("📥 Download dos Dados em Excel")
-            formato_excel = st.radio(
-                "Escolha o formato do arquivo Excel:",
-                ("Agrupar por tipo de dado (uma aba para Preços, outra para Dividendos, etc.)",
-                 "Separar por ticker e tipo (ex: Precos_PETR4, Div_VALE3, etc.)"),
-                key="excel_format"
-            )
-
-            nome_arquivo = f"dados_mercado_{data_inicio_input.replace('/','')}_{data_fim_input.replace('/','')}_{datetime.now().strftime('%H%M')}.xlsx"
-            try:
-                # Usar BytesIO para criar o Excel em memória e evitar salvar arquivo no servidor
-                from io import BytesIO
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer: # Usar xlsxwriter para melhor compatibilidade
-                    if formato_excel.startswith("Agrupar"):
-                        if todos_dados_acoes:
-                            df_acoes_empilhado = pd.concat(todos_dados_acoes.values(), ignore_index=True)
-                            df_acoes_empilhado.to_excel(writer, sheet_name="Precos_Historicos", index=False)
-                        if todos_dados_dividendos:
-                            df_dividendos_empilhado = pd.concat(todos_dados_dividendos.values(), ignore_index=True)
-                            df_dividendos_empilhado.to_excel(writer, sheet_name="Dividendos", index=False)
-                        if todos_dados_bonificacoes:
-                            df_bonificacoes_empilhado = pd.concat(todos_dados_bonificacoes.values(), ignore_index=True)
-                            df_bonificacoes_empilhado.to_excel(writer, sheet_name="Bonificacoes", index=False)
-
-                    else: # Separar por ticker e tipo
-                        if todos_dados_acoes:
-                            for ticker, df_acao in todos_dados_acoes.items():
-                                sheet_name = f"Precos_{ticker[:25]}" # Limita tamanho do nome da aba
-                                df_acao.to_excel(writer, sheet_name=sheet_name, index=False)
-                        if todos_dados_dividendos:
-                            for ticker, df_divid in todos_dados_dividendos.items():
-                                sheet_name = f"Div_{ticker[:25]}"
-                                df_divid.to_excel(writer, sheet_name=sheet_name, index=False)
-                        if todos_dados_bonificacoes:
-                            for ticker, df_bonif in todos_dados_bonificacoes.items():
-                                sheet_name = f"Bonif_{ticker[:25]}"
-                                df_bonif.to_excel(writer, sheet_name=sheet_name, index=False)
-
-                # Prepara os dados para o botão de download
-                excel_data = output.getvalue()
-
-                st.download_button(
-                    label="Baixar arquivo Excel",
-                    data=excel_data,
-                    file_name=nome_arquivo,
-                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                )
-            except Exception as e:
-                 st.error(f"Erro ao gerar o arquivo Excel: {e}")
-
-        elif not erros_gerais: # Só mostra se não houver dados E não houver erros reportados
-             st.info("Nenhum dado encontrado para os critérios selecionados.")
-        # Se houve erros_gerais, eles já foram mostrados como st.warning
+                    df_bonificacoes = buscar_bonificacoes_b3(ticker, df_empresas, data_inicio_dt, data_fim_dt)
+                    if not df_bonificacoes.empty:
+                        bonificacoes_temp[ticker] = df_bonificacoes
+                st.session_state.todos_dados_bonificacoes = bonificacoes_temp
+        
+        # Define a flag para indicar que a busca foi concluída
+        st.session_state.dados_buscados = True
 
     else:
         st.warning("Por favor, preencha todos os campos: tickers, datas e selecione ao menos um tipo de dado.")
+
+
+# --- EXIBIÇÃO E DOWNLOAD (EXECUTADO APENAS SE OS DADOS FORAM BUSCADOS) ---
+if st.session_state.get('dados_buscados', False):
+
+    # Exibe quaisquer erros/avisos coletados durante a busca
+    if st.session_state.erros_gerais:
+        for erro in st.session_state.erros_gerais:
+            st.warning(erro)
+
+    # Exibe os dados encontrados
+    if st.session_state.todos_dados_acoes:
+        st.subheader("1. Preços Históricos (Yahoo Finance)")
+        df_acoes_agrupado = pd.concat(st.session_state.todos_dados_acoes.values(), ignore_index=True)
+        st.dataframe(df_acoes_agrupado)
+
+    if st.session_state.todos_dados_dividendos:
+        st.subheader("2. Dividendos (B3)")
+        df_dividendos_agrupado = pd.concat(st.session_state.todos_dados_dividendos.values(), ignore_index=True)
+        st.dataframe(df_dividendos_agrupado)
+
+    if st.session_state.todos_dados_bonificacoes:
+        st.subheader("3. Bonificações (B3)")
+        df_bonificacoes_agrupado = pd.concat(st.session_state.todos_dados_bonificacoes.values(), ignore_index=True)
+        st.dataframe(df_bonificacoes_agrupado)
+
+    # Verifica se há algum dado para baixar
+    if not st.session_state.todos_dados_acoes and not st.session_state.todos_dados_dividendos and not st.session_state.todos_dados_bonificacoes:
+        st.info("Nenhum dado encontrado para os critérios selecionados.")
+    else:
+        # --- Geração e Download do Excel ---
+        st.subheader("📥 Download dos Dados em Excel")
+        formato_excel = st.radio(
+            "Escolha o formato do arquivo Excel:",
+            ("Agrupar por tipo de dado (uma aba para Preços, outra para Dividendos, etc.)",
+             "Separar por ticker e tipo (ex: Precos_PETR4, Div_VALE3, etc.)"),
+            key="excel_format"
+        )
+
+        nome_arquivo = f"dados_mercado_{data_inicio_input.replace('/','')}_{data_fim_input.replace('/','')}_{datetime.now().strftime('%H%M')}.xlsx"
+        try:
+            from io import BytesIO
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                if formato_excel.startswith("Agrupar"):
+                    if st.session_state.todos_dados_acoes:
+                        pd.concat(st.session_state.todos_dados_acoes.values(), ignore_index=True).to_excel(writer, sheet_name="Precos_Historicos", index=False)
+                    if st.session_state.todos_dados_dividendos:
+                        pd.concat(st.session_state.todos_dados_dividendos.values(), ignore_index=True).to_excel(writer, sheet_name="Dividendos", index=False)
+                    if st.session_state.todos_dados_bonificacoes:
+                        pd.concat(st.session_state.todos_dados_bonificacoes.values(), ignore_index=True).to_excel(writer, sheet_name="Bonificacoes", index=False)
+                
+                else: # Separar por ticker e tipo
+                    if st.session_state.todos_dados_acoes:
+                        for ticker, df in st.session_state.todos_dados_acoes.items():
+                            df.to_excel(writer, sheet_name=f"Precos_{ticker[:25]}", index=False)
+                    if st.session_state.todos_dados_dividendos:
+                        for ticker, df in st.session_state.todos_dados_dividendos.items():
+                            df.to_excel(writer, sheet_name=f"Div_{ticker[:25]}", index=False)
+                    if st.session_state.todos_dados_bonificacoes:
+                        for ticker, df in st.session_state.todos_dados_bonificacoes.items():
+                            df.to_excel(writer, sheet_name=f"Bonif_{ticker[:25]}", index=False)
+            
+            excel_data = output.getvalue()
+
+            st.download_button(
+                label="Baixar arquivo Excel",
+                data=excel_data,
+                file_name=nome_arquivo,
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        except Exception as e:
+            st.error(f"Erro ao gerar o arquivo Excel: {e}")
 
 # --- Rodapé ---
 st.markdown("""

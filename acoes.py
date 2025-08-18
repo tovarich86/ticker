@@ -291,7 +291,7 @@ def patch_yfdata_cookie_basic():
 
 patch_yfdata_cookie_basic()
 
-def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None):
+def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresas_df, st=None):
     try:
         data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
         data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
@@ -305,6 +305,25 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
     dados_acoes_dict = {}
     erros = []
 
+    # 1. Criar um conjunto (set) de todos os tickers da B3 para uma busca rápida e eficiente.
+    #    Isso evita percorrer o DataFrame repetidamente dentro do loop.
+    b3_tickers_set = set()
+    if 'Tickers' in empresas_df.columns:
+        for t_list in empresas_df['Tickers'].dropna().str.split(','):
+            for ticker in t_list:
+                if ticker.strip():
+                    b3_tickers_set.add(ticker.strip().upper())
+
+    # 2. Substituir a lógica antiga pela nova, que verifica se o ticker está no conjunto da B3.
+    tickers_yf = []
+    for ticker in tickers_list:
+        # Se o ticker estiver na nossa lista da B3, adicione .SA
+        if ticker in b3_tickers_set:
+            tickers_yf.append(ticker + '.SA')
+        # Senão, use o ticker como está (para AAPL, G24.DE, etc.)
+        else:
+            tickers_yf.append(ticker)
+
     # Cria sessão curl_cffi com fingerprint de navegador Chrome
     session = curl_requests.Session(impersonate="chrome")
 
@@ -313,33 +332,34 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, st=None
             st.write(f"Buscando preços históricos para {', '.join(tickers_list)}...")
         else:
             print(f"Buscando preços históricos para {', '.join(tickers_list)}...")
-
-        # Adiciona .SA se necessário
-        tickers_yf = [ticker + '.SA' if any(char.isdigit() for char in ticker) and not ticker.endswith('.SA') else ticker for ticker in tickers_list]
-
+            
+        # A lista tickers_yf agora está correta
         dados = yf.download(
             tickers=tickers_yf,
             start=data_inicio_str,
             end=data_fim_ajustada_str,
             auto_adjust=False,
             progress=False,
-            session=session  # Passa a sessão personalizada para o yfinance
+            session=session
         )
     except Exception as e:
         error_type = type(e).__name__
         return {}, [f"Erro ao baixar dados de preços: {error_type} - {e}"]
-
+    
     for idx, ticker in enumerate(tickers_list):
         ticker_yf = tickers_yf[idx]
         try:
             if isinstance(dados.columns, pd.MultiIndex):
-                # Extrai os dados desse ticker
-                if ticker_yf not in dados.columns.levels[1]:
+                if ticker_yf not in dados.columns.get_level_values(1):
                     erros.append(f"Nenhum dado encontrado para {ticker} ({ticker_yf}).")
                     continue
                 dados_ticker = dados.xs(key=ticker_yf, axis=1, level=1)
             else:
-                dados_ticker = dados.copy()
+                 # Caso apenas um ticker seja baixado e não venha com MultiIndex
+                 if dados.empty:
+                    erros.append(f"Nenhum dado encontrado para {ticker} ({ticker_yf}).")
+                    continue
+                 dados_ticker = dados.copy()
 
             if not dados_ticker.empty:
                 dados_ticker = dados_ticker.reset_index()
@@ -436,7 +456,7 @@ if st.button('Buscar Dados', key="search_button"):
         with st.spinner('Buscando dados... Por favor, aguarde.'):
             # 1. Preços Históricos
             if "Preços Históricos (Yahoo Finance)" in tipos_dados_selecionados:
-                dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input)
+                dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresas_df=df_empresas)
                 if dados_acoes_dict:
                     st.session_state.todos_dados_acoes = dados_acoes_dict
                 if erros_acoes:

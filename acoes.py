@@ -6,7 +6,14 @@ from base64 import b64encode
 from datetime import datetime, timedelta
 import json
 import re
-import time # Importar para usar time.sleep
+import time 
+
+# --- IMPORTAÇÃO ADICIONADA ---
+# Importa curl_cffi para criar sessão com fingerprint de navegador
+from curl_cffi import requests as curl_requests
+from requests.cookies import create_cookie
+import yfinance.data as _data
+
 
 # URL do arquivo no GitHub
 URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3%20(6).xlsx"
@@ -58,7 +65,7 @@ def get_ticker_info(ticker, empresas_df):
             }
     return None  # Retorna None se o ticker não for encontrado
 
-# --- Função de Busca de Dividendos (com Paginação e Filtro typeStock) ---
+# --- Função de Busca de Dividendos (MODIFICADA) ---
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Busca dividendos na B3 para um ticker específico, tratando paginação
@@ -66,7 +73,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     Retorna um DataFrame com os dividendos filtrados ou DataFrame vazio.
     """
     if not any(char.isdigit() for char in ticker):
-        # st.info(f"Ticker {ticker}: Parece internacional, buscando apenas em yfinance.")
         return pd.DataFrame()
 
     ticker_info = get_ticker_info(ticker, empresas_df)
@@ -76,125 +82,102 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
     trading_name = ticker_info['trading_name']
-    desired_type_stock = ticker_info['type_stock'] # Tipo de ação (ON, PN, UNT) do ticker buscado
+    desired_type_stock = ticker_info['type_stock']
 
     if not trading_name:
-         st.warning(f"Nome de pregão não encontrado para o ticker {ticker}.")
-         return pd.DataFrame()
+        st.warning(f"Nome de pregão não encontrado para o ticker {ticker}.")
+        return pd.DataFrame()
     if not desired_type_stock:
         st.warning(f"Tipo de ação (typeStock) não encontrado para o ticker {ticker} na planilha.")
-        # Pode-se optar por continuar sem filtrar ou retornar vazio. Vamos retornar vazio por segurança.
         return pd.DataFrame()
 
     all_dividends = []
     current_page = 1
-    total_pages = 1 # Inicializa com 1 para fazer a primeira requisição
+    total_pages = 1
 
     st.write(f"Buscando dividendos para {ticker} ({trading_name}, Tipo: {desired_type_stock})...")
 
+    # --- ALTERAÇÃO AQUI: Usa curl_cffi ---
+    session = curl_requests.Session(impersonate="chrome")
+    
     while current_page <= total_pages:
         try:
             params = {
                 "language": "pt-br",
                 "pageNumber": str(current_page),
-                "pageSize": "50", # Ajustado para um tamanho razoável
+                "pageSize": "50",
                 "tradingName": trading_name,
-                # Não incluimos typeStock aqui, pois a API parece não suportar; filtramos depois
             }
             params_json = json.dumps(params)
-            params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8') # Usar utf-8
+            params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
             url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
 
-            response = requests.get(url, timeout=30) # Adiciona timeout
-            response.raise_for_status() # Levanta erro para status >= 400
+            # --- ALTERAÇÃO AQUI: Usa a sessão para fazer a requisição ---
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
             response_json = response.json()
 
-            # Atualiza o total de páginas na primeira requisição bem-sucedida
             if current_page == 1 and 'page' in response_json and 'totalPages' in response_json['page']:
                 total_pages = int(response_json['page']['totalPages'])
                 st.write(f"Total de {total_pages} páginas de dividendos encontradas para {trading_name}.")
 
-
             if 'results' in response_json and response_json['results']:
                 all_dividends.extend(response_json['results'])
             elif current_page == 1:
-                 # st.info(f"Nenhum dividendo encontrado na B3 para {ticker} ({trading_name}) na página {current_page}.")
-                 break # Sai se não houver resultados na primeira página
+                break
 
-            # Pausa leve para evitar sobrecarregar a API
             if total_pages > 1:
-                 time.sleep(0.5) # Pausa de 0.5 segundos entre páginas
+                time.sleep(0.5)
 
             current_page += 1
 
-        except requests.exceptions.RequestException as e:
+        # --- ALTERAÇÃO AQUI: Captura o erro da biblioteca correta ---
+        except curl_requests.errors.RequestsError as e:
             st.error(f"Erro de rede ao buscar dividendos para {ticker} (página {current_page}): {e}")
-            # Decide se quer tentar novamente ou parar
-            break # Para em caso de erro de rede
+            break
         except json.JSONDecodeError:
-             st.error(f"Erro ao decodificar JSON da resposta da B3 para {ticker} (página {current_page}).")
-             break # Para se a resposta não for JSON válido
+            st.error(f"Erro ao decodificar JSON da resposta da B3 para {ticker} (página {current_page}).")
+            break
         except Exception as e:
             st.error(f"Erro inesperado ao buscar dividendos para {ticker} (página {current_page}): {e}")
-            break # Para em caso de outros erros
+            break
 
     if not all_dividends:
-        # st.info(f"Nenhum dividendo encontrado na B3 para {ticker} ({trading_name}) após consulta.")
         return pd.DataFrame()
 
-    # Criar DataFrame com todos os resultados
     df = pd.DataFrame(all_dividends)
-    # --- Filtragem pós-busca ---
-    # 1. Filtrar pelo typeStock desejado
     if 'typeStock' in df.columns:
-         df['typeStock'] = df['typeStock'].str.strip().str.upper() # Limpa e padroniza
-         df_filtered_type = df[df['typeStock'] == desired_type_stock].copy() # Filtra pelo tipo correto
-         if df_filtered_type.empty:
-              # st.info(f"Dividendos encontrados para {trading_name}, mas nenhum do tipo {desired_type_stock} para o ticker {ticker}.")
-              return pd.DataFrame()
-         df = df_filtered_type
+        df['typeStock'] = df['typeStock'].str.strip().str.upper()
+        df_filtered_type = df[df['typeStock'] == desired_type_stock].copy()
+        if df_filtered_type.empty:
+            return pd.DataFrame()
+        df = df_filtered_type
     else:
-         st.warning(f"Coluna 'typeStock' não encontrada nos resultados da B3 para {ticker}. Não foi possível filtrar por tipo de ação.")
-         # Decide se continua sem filtro ou retorna vazio. Vamos continuar sem filtro neste caso.
+        st.warning(f"Coluna 'typeStock' não encontrada nos resultados da B3 para {ticker}. Não foi possível filtrar por tipo de ação.")
 
-    # 2. Adicionar coluna Ticker
     df['Ticker'] = ticker
 
-    # 3. Converter datas e filtrar pelo período
     if 'lastDatePriorEx' in df.columns:
-        # Converte para datetime primeiro para garantir o tipo correto antes de filtrar
         df['lastDatePriorEx_dt'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
-        df = df.dropna(subset=['lastDatePriorEx_dt']) # Remove linhas com datas inválidas
-        # Filtra usando os objetos datetime
+        df = df.dropna(subset=['lastDatePriorEx_dt'])
         df = df[(df['lastDatePriorEx_dt'] >= data_inicio) & (df['lastDatePriorEx_dt'] <= data_fim)]
-        # Remove a coluna datetime temporária se não for mais necessária ou formata a original
         df = df.drop(columns=['lastDatePriorEx_dt'])
-        # Se precisar da coluna original formatada:
-        # df['lastDatePriorEx'] = df['lastDatePriorEx_dt'].dt.strftime('%d/%m/%Y')
     else:
         st.warning(f"Coluna 'lastDatePriorEx' não encontrada para filtrar datas de dividendos de {ticker}.")
-        return pd.DataFrame() # Retorna vazio se não puder filtrar por data
+        return pd.DataFrame()
 
-    # Reordenar colunas
     if 'Ticker' in df.columns:
-        # Garante que todas as colunas originais importantes sejam mantidas
         cols_to_keep = ['Ticker', 'paymentDate', 'typeStock', 'lastDatePriorEx', 'value', 'relatedToAction', 'label', 'ratio']
         existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
         other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
         df = df[existing_cols_to_keep + other_cols]
 
-    if df.empty:
-       # st.info(f"Nenhum dividendo encontrado para {ticker} (Tipo: {desired_type_stock}) no período selecionado.")
-       pass # Não mostra info se já mostrou antes
-
     return df
 
-# --- Função de Busca de Bonificações (Eventos Societários) ---
-# Renomeada para clareza
+# --- Função de Busca de Bonificações (MODIFICADA) ---
 def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """Busca eventos de bonificação (stock dividends) na B3 usando o CODE da empresa."""
     if not any(char.isdigit() for char in ticker):
-        # st.info(f"Ticker {ticker}: Parece internacional, bonificações da B3 não serão buscadas.")
         return pd.DataFrame()
 
     ticker_info = get_ticker_info(ticker, empresas_df)
@@ -204,6 +187,9 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     code = ticker_info['code']
 
+    # --- ALTERAÇÃO AQUI: Usa curl_cffi ---
+    session = curl_requests.Session(impersonate="chrome")
+
     try:
         params_bonificacoes = {
             "issuingCompany": code,
@@ -212,68 +198,50 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         params_json = json.dumps(params_bonificacoes)
         params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
-        response = requests.get(url, timeout=30)
+        
+        # --- ALTERAÇÃO AQUI: Usa a sessão para fazer a requisição ---
+        response = session.get(url, timeout=30)
         response.raise_for_status()
 
-        # Verifica se a resposta é válida antes de tentar decodificar JSON
         if not response.content or not response.text.strip():
-             # st.info(f"Resposta vazia da API de bonificações para {ticker} (Código: {code}).")
-             return pd.DataFrame()
+            return pd.DataFrame()
         try:
             data = response.json()
         except json.JSONDecodeError:
-             # st.info(f"Resposta inválida (não JSON) da API de bonificações para {ticker} (Código: {code}).")
-             return pd.DataFrame()
+            return pd.DataFrame()
 
-
-        # Verifica a estrutura esperada da resposta
         if not isinstance(data, list) or not data or "stockDividends" not in data[0] or not data[0]["stockDividends"]:
-            # st.info(f"Nenhum dado de bonificação ('stockDividends') encontrado na resposta para {ticker} (Código: {code}).")
             return pd.DataFrame()
 
         df = pd.DataFrame(data[0]["stockDividends"])
         if df.empty:
             return pd.DataFrame()
 
-        # Adiciona Ticker e filtra por data
         df['Ticker'] = ticker
         if 'lastDatePrior' in df.columns:
-             # Converte para datetime para filtro preciso
-             df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
-             df = df.dropna(subset=['lastDatePrior_dt'])
-             # Filtra usando objetos datetime
-             df = df[(df['lastDatePrior_dt'] >= data_inicio) & (df['lastDatePrior_dt'] <= data_fim)]
-             # Remove a coluna temporária
-             df = df.drop(columns=['lastDatePrior_dt'])
-             # Se precisar da coluna original formatada:
-             # df['lastDatePrior'] = df['lastDatePrior_dt'].dt.strftime('%d/%m/%Y')
+            df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
+            df = df.dropna(subset=['lastDatePrior_dt'])
+            df = df[(df['lastDatePrior_dt'] >= data_inicio) & (df['lastDatePrior_dt'] <= data_fim)]
+            df = df.drop(columns=['lastDatePrior_dt'])
         else:
-             st.warning(f"Coluna 'lastDatePrior' não encontrada para filtrar datas de bonificações de {ticker}.")
-             return pd.DataFrame() # Retorna vazio se não puder filtrar data
+            st.warning(f"Coluna 'lastDatePrior' não encontrada para filtrar datas de bonificações de {ticker}.")
+            return pd.DataFrame()
 
-
-        # Reordena colunas
         if 'Ticker' in df.columns:
-                cols_to_keep = ['Ticker', 'label', 'lastDatePrior', 'factor', 'approvedIn', 'isinCode']
-                existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
-                other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
-                df = df[existing_cols_to_keep + other_cols]
-
+            cols_to_keep = ['Ticker', 'label', 'lastDatePrior', 'factor', 'approvedIn', 'isinCode']
+            existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
+            other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
+            df = df[existing_cols_to_keep + other_cols]
 
         return df
 
-    except requests.exceptions.RequestException as e:
+    # --- ALTERAÇÃO AQUI: Captura o erro da biblioteca correta ---
+    except curl_requests.errors.RequestsError as e:
         st.error(f"Erro de rede ao buscar bonificações para {ticker} (Código: {code}): {e}")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"Erro inesperado ao buscar bonificações para {ticker} (Código: {code}): {e}")
         return pd.DataFrame()
-
-
-# Importa curl_cffi para criar sessão com fingerprint de navegador
-from curl_cffi import requests as curl_requests
-from requests.cookies import create_cookie
-import yfinance.data as _data
 
 # Patch para cookies do yfinance
 def _wrap_cookie(cookie, session):
@@ -305,8 +273,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresa
     dados_acoes_dict = {}
     erros = []
 
-    # 1. Criar um conjunto (set) de todos os tickers da B3 para uma busca rápida e eficiente.
-    #    Isso evita percorrer o DataFrame repetidamente dentro do loop.
     b3_tickers_set = set()
     if 'Tickers' in empresas_df.columns:
         for t_list in empresas_df['Tickers'].dropna().str.split(','):
@@ -314,17 +280,13 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresa
                 if ticker.strip():
                     b3_tickers_set.add(ticker.strip().upper())
 
-    # 2. Substituir a lógica antiga pela nova, que verifica se o ticker está no conjunto da B3.
     tickers_yf = []
     for ticker in tickers_list:
-        # Se o ticker estiver na nossa lista da B3, adicione .SA
         if ticker in b3_tickers_set:
             tickers_yf.append(ticker + '.SA')
-        # Senão, use o ticker como está (para AAPL, G24.DE, etc.)
         else:
             tickers_yf.append(ticker)
 
-    # Cria sessão curl_cffi com fingerprint de navegador Chrome
     session = curl_requests.Session(impersonate="chrome")
 
     try:
@@ -333,7 +295,6 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresa
         else:
             print(f"Buscando preços históricos para {', '.join(tickers_list)}...")
             
-        # A lista tickers_yf agora está correta
         dados = yf.download(
             tickers=tickers_yf,
             start=data_inicio_str,
@@ -355,11 +316,10 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresa
                     continue
                 dados_ticker = dados.xs(key=ticker_yf, axis=1, level=1)
             else:
-                 # Caso apenas um ticker seja baixado e não venha com MultiIndex
-                 if dados.empty:
+                if dados.empty:
                     erros.append(f"Nenhum dado encontrado para {ticker} ({ticker_yf}).")
                     continue
-                 dados_ticker = dados.copy()
+                dados_ticker = dados.copy()
 
             if not dados_ticker.empty:
                 dados_ticker = dados_ticker.reset_index()
@@ -386,7 +346,7 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresa
 # ============================================
 # Interface do Streamlit
 # ============================================
-st.set_page_config(layout="wide") # Usa layout largo
+st.set_page_config(layout="wide")
 st.title('Consulta Dados de Mercado B3 e Preço Yahoo Finance')
 
 # --- Carrega o DataFrame de empresas ---
@@ -395,22 +355,16 @@ df_empresas = carregar_empresas()
 if df_empresas.empty:
     st.error("Não foi possível carregar a lista de empresas. Verifique a URL ou o arquivo. A aplicação não pode continuar.")
     st.stop()
-# else:
-    # st.success(f"{len(df_empresas)} empresas carregadas com sucesso.")
-    # Opcional: Mostrar uma prévia ou informações sobre o df_empresas
-    # st.dataframe(df_empresas.head())
-
 
 # --- Entradas do Usuário ---
 col1, col2 = st.columns(2)
 with col1:
     tickers_input = st.text_input("Digite os tickers separados por vírgula (ex: PETR4, VALE3, MGLU3, ITUB4):", key="tickers")
 with col2:
-    # Seleção dos tipos de dados a buscar
     tipos_dados_selecionados = st.multiselect(
         "Selecione os dados que deseja buscar:",
         ["Preços Históricos (Yahoo Finance)", "Dividendos (B3)", "Bonificações (B3)"],
-        default=["Preços Históricos (Yahoo Finance)"], # Padrão
+        default=["Preços Históricos (Yahoo Finance)"],
         key="data_types"
     )
 
@@ -420,9 +374,7 @@ with col3:
 with col4:
     data_fim_input = st.text_input("Data de fim (dd/mm/aaaa):", key="date_end")
 
-
 # --- Inicialização do Session State ---
-# Garante que as variáveis existem desde o início para evitar erros.
 if 'dados_buscados' not in st.session_state:
     st.session_state.dados_buscados = False
     st.session_state.todos_dados_acoes = {}
@@ -430,10 +382,8 @@ if 'dados_buscados' not in st.session_state:
     st.session_state.todos_dados_bonificacoes = {}
     st.session_state.erros_gerais = []
 
-
 # --- Botão e Lógica Principal ---
 if st.button('Buscar Dados', key="search_button"):
-    # Reseta o estado a cada nova busca
     st.session_state.dados_buscados = False
     st.session_state.todos_dados_acoes = {}
     st.session_state.todos_dados_dividendos = {}
@@ -454,7 +404,6 @@ if st.button('Buscar Dados', key="search_button"):
         tickers_list = sorted(list(set([ticker.strip().upper() for ticker in tickers_input.split(',') if ticker.strip()])))
 
         with st.spinner('Buscando dados... Por favor, aguarde.'):
-            # 1. Preços Históricos
             if "Preços Históricos (Yahoo Finance)" in tipos_dados_selecionados:
                 dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresas_df=df_empresas)
                 if dados_acoes_dict:
@@ -462,7 +411,6 @@ if st.button('Buscar Dados', key="search_button"):
                 if erros_acoes:
                     st.session_state.erros_gerais.extend(erros_acoes)
 
-            # 2. Dividendos
             if "Dividendos (B3)" in tipos_dados_selecionados:
                 dividendos_temp = {}
                 for ticker in tickers_list:
@@ -471,7 +419,6 @@ if st.button('Buscar Dados', key="search_button"):
                         dividendos_temp[ticker] = df_dividendos
                 st.session_state.todos_dados_dividendos = dividendos_temp
 
-            # 3. Bonificações
             if "Bonificações (B3)" in tipos_dados_selecionados:
                 bonificacoes_temp = {}
                 for ticker in tickers_list:
@@ -480,22 +427,16 @@ if st.button('Buscar Dados', key="search_button"):
                         bonificacoes_temp[ticker] = df_bonificacoes
                 st.session_state.todos_dados_bonificacoes = bonificacoes_temp
         
-        # Define a flag para indicar que a busca foi concluída
         st.session_state.dados_buscados = True
-
     else:
         st.warning("Por favor, preencha todos os campos: tickers, datas e selecione ao menos um tipo de dado.")
 
-
-# --- EXIBIÇÃO E DOWNLOAD (EXECUTADO APENAS SE OS DADOS FORAM BUSCADOS) ---
+# --- EXIBIÇÃO E DOWNLOAD ---
 if st.session_state.get('dados_buscados', False):
-
-    # Exibe quaisquer erros/avisos coletados durante a busca
     if st.session_state.erros_gerais:
         for erro in st.session_state.erros_gerais:
             st.warning(erro)
 
-    # Exibe os dados encontrados
     if st.session_state.todos_dados_acoes:
         st.subheader("1. Preços Históricos (Yahoo Finance)")
         df_acoes_agrupado = pd.concat(st.session_state.todos_dados_acoes.values(), ignore_index=True)
@@ -511,11 +452,9 @@ if st.session_state.get('dados_buscados', False):
         df_bonificacoes_agrupado = pd.concat(st.session_state.todos_dados_bonificacoes.values(), ignore_index=True)
         st.dataframe(df_bonificacoes_agrupado)
 
-    # Verifica se há algum dado para baixar
     if not st.session_state.todos_dados_acoes and not st.session_state.todos_dados_dividendos and not st.session_state.todos_dados_bonificacoes:
         st.info("Nenhum dado encontrado para os critérios selecionados.")
     else:
-        # --- Geração e Download do Excel ---
         st.subheader("📥 Download dos Dados em Excel")
         formato_excel = st.radio(
             "Escolha o formato do arquivo Excel:",

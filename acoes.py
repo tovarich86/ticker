@@ -9,7 +9,7 @@ import re
 import time # Importar para usar time.sleep
 
 # URL do arquivo no GitHub
-URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3.xlsx"
+URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3%20(6).xlsx"
 
 @st.cache_data
 def carregar_empresas():

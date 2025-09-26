@@ -502,6 +502,7 @@ if st.session_state.get('dados_buscados', False):
 st.markdown("""
 ---
 **(Nota sobre Close vs. Adjusted Close: Historicamente usamos o preço de fechamento "Close" (não o "Adjusted Close"), pois é o valor bruto do dia, que historicamente se alinha mais com os dados extraídos diretamente da B3)**
+
 **Fontes dos dados:**
 - Preços Históricos: [Yahoo Finance](https://finance.yahoo.com)
 - Dividendos e Eventos societários: [API B3](https://www.b3.com.br) 

@@ -1,21 +1,15 @@
 import streamlit as st
-import requests
 import pandas as pd
 import yfinance as yf
 from base64 import b64encode
 from datetime import datetime, timedelta
 import json
-import re
-import time 
+import time
 
-# --- IMPORTAÇÃO ADICIONADA ---
-# Importa curl_cffi para criar sessão com fingerprint de navegador
+# Importa curl_cffi para criar sessão com fingerprint de navegador para as APIs da B3
 from curl_cffi import requests as curl_requests
-from requests.cookies import create_cookie
-import yfinance.data as _data
 
-
-# URL do arquivo no GitHub
+# URL do arquivo no GitHub com a lista de empresas
 URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3%20(6).xlsx"
 
 @st.cache_data
@@ -65,7 +59,6 @@ def get_ticker_info(ticker, empresas_df):
             }
     return None  # Retorna None se o ticker não for encontrado
 
-# --- Função de Busca de Dividendos (MODIFICADA) ---
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
     """
     Busca dividendos na B3 para um ticker específico, tratando paginação
@@ -97,7 +90,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     st.write(f"Buscando dividendos para {ticker} ({trading_name}, Tipo: {desired_type_stock})...")
 
-    # --- ALTERAÇÃO AQUI: Usa curl_cffi ---
+    # Usa curl_cffi para simular um navegador na chamada à B3
     session = curl_requests.Session(impersonate="chrome")
     
     while current_page <= total_pages:
@@ -112,7 +105,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
             params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
             url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
 
-            # --- ALTERAÇÃO AQUI: Usa a sessão para fazer a requisição ---
             response = session.get(url, timeout=30)
             response.raise_for_status()
             response_json = response.json()
@@ -131,7 +123,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
             current_page += 1
 
-        # --- ALTERAÇÃO AQUI: Captura o erro da biblioteca correta ---
         except curl_requests.errors.RequestsError as e:
             st.error(f"Erro de rede ao buscar dividendos para {ticker} (página {current_page}): {e}")
             break
@@ -174,7 +165,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     return df
 
-# --- Função de Busca de Bonificações (MODIFICADA) ---
 def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """Busca eventos de bonificação (stock dividends) na B3 usando o CODE da empresa."""
     if not any(char.isdigit() for char in ticker):
@@ -187,7 +177,7 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
     code = ticker_info['code']
 
-    # --- ALTERAÇÃO AQUI: Usa curl_cffi ---
+    # Usa curl_cffi para simular um navegador na chamada à B3
     session = curl_requests.Session(impersonate="chrome")
 
     try:
@@ -199,7 +189,6 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
         
-        # --- ALTERAÇÃO AQUI: Usa a sessão para fazer a requisição ---
         response = session.get(url, timeout=30)
         response.raise_for_status()
 
@@ -235,7 +224,6 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
 
         return df
 
-    # --- ALTERAÇÃO AQUI: Captura o erro da biblioteca correta ---
     except curl_requests.errors.RequestsError as e:
         st.error(f"Erro de rede ao buscar bonificações para {ticker} (Código: {code}): {e}")
         return pd.DataFrame()
@@ -243,90 +231,85 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         st.error(f"Erro inesperado ao buscar bonificações para {ticker} (Código: {code}): {e}")
         return pd.DataFrame()
 
-# Patch para cookies do yfinance
-def _wrap_cookie(cookie, session):
-    if isinstance(cookie, str):
-        value = session.cookies.get(cookie)
-        return create_cookie(name=cookie, value=value)
-    return cookie
-
-def patch_yfdata_cookie_basic():
-    original = _data.YfData._get_cookie_basic
-    def _patched(self, timeout=30):
-        cookie = original(self, timeout)
-        return _wrap_cookie(cookie, self._session)
-    _data.YfData._get_cookie_basic = _patched
-
-patch_yfdata_cookie_basic()
-
+# --- Função de Busca de Dados de Ações (CORRIGIDA) ---
 def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresas_df, st=None):
+    """
+    Busca o histórico de preços de ações usando o yfinance, permitindo que a biblioteca
+    gerencie sua própria sessão de rede.
+    """
     try:
+        # Converte as datas para o formato que o yfinance espera (YYYY-MM-DD)
         data_inicio_str = datetime.strptime(data_inicio_input, "%d/%m/%Y").strftime("%Y-%m-%d")
         data_fim_dt = datetime.strptime(data_fim_input, "%d/%m/%Y")
+        # Adiciona 1 dia à data final para garantir que o último dia seja incluído no resultado
         data_fim_ajustada_str = (data_fim_dt + timedelta(days=1)).strftime("%Y-%m-%d")
     except ValueError:
         if st:
             st.error("Formato de data inválido. Use dd/mm/aaaa.")
         return {}, ["Formato de data inválido."]
 
+    # Limpa e formata a lista de tickers
     tickers_list = [ticker.strip().upper() for ticker in tickers_input.split(',') if ticker.strip()]
     dados_acoes_dict = {}
     erros = []
 
+    # Cria um conjunto de tickers da B3 para adicionar o sufixo '.SA'
     b3_tickers_set = set()
     if 'Tickers' in empresas_df.columns:
         for t_list in empresas_df['Tickers'].dropna().str.split(','):
             for ticker in t_list:
                 if ticker.strip():
                     b3_tickers_set.add(ticker.strip().upper())
-
-    tickers_yf = []
-    for ticker in tickers_list:
-        if ticker in b3_tickers_set:
-            tickers_yf.append(ticker + '.SA')
-        else:
-            tickers_yf.append(ticker)
-
-    session = curl_requests.Session(impersonate="chrome")
+    
+    # Adiciona o sufixo '.SA' para tickers brasileiros reconhecidos
+    tickers_yf = [f"{ticker}.SA" if ticker in b3_tickers_set else ticker for ticker in tickers_list]
 
     try:
         if st:
             st.write(f"Buscando preços históricos para {', '.join(tickers_list)}...")
         else:
             print(f"Buscando preços históricos para {', '.join(tickers_list)}...")
-            
+        
+        # A chamada ao yf.download agora é feita sem sessão customizada.
+        # Isso permite que o yfinance use sua própria lógica de conexão, que é mais robusta.
         dados = yf.download(
             tickers=tickers_yf,
             start=data_inicio_str,
             end=data_fim_ajustada_str,
-            auto_adjust=False,
-            progress=False,
-            session=session
+            auto_adjust=False, # Manter False para obter 'Adj Close' e 'Close'
+            progress=False
         )
+        
     except Exception as e:
         error_type = type(e).__name__
-        return {}, [f"Erro ao baixar dados de preços: {error_type} - {e}"]
-    
+        return {}, [f"Erro ao baixar dados de preços do Yahoo Finance: {error_type} - {e}"]
+
+    # Se o download falhar para todos os tickers, 'dados' pode estar vazio
+    if dados.empty:
+        erros.append("Nenhum dado de preço foi retornado pelo Yahoo Finance para os tickers solicitados.")
+        return {}, erros
+
+    # Processa os dados para cada ticker individualmente
     for idx, ticker in enumerate(tickers_list):
         ticker_yf = tickers_yf[idx]
         try:
+            # Se mais de um ticker foi baixado, os dados têm um MultiIndex nas colunas
             if isinstance(dados.columns, pd.MultiIndex):
-                if ticker_yf not in dados.columns.get_level_values(1):
-                    erros.append(f"Nenhum dado encontrado para {ticker} ({ticker_yf}).")
-                    continue
-                dados_ticker = dados.xs(key=ticker_yf, axis=1, level=1)
-            else:
-                if dados.empty:
-                    erros.append(f"Nenhum dado encontrado para {ticker} ({ticker_yf}).")
-                    continue
+                dados_ticker = dados.loc[:, (slice(None), ticker_yf)]
+                dados_ticker.columns = dados_ticker.columns.droplevel(1)
+            else: # Se apenas um ticker foi baixado
                 dados_ticker = dados.copy()
+
+            dados_ticker = dados_ticker.dropna(how='all')
 
             if not dados_ticker.empty:
                 dados_ticker = dados_ticker.reset_index()
                 dados_ticker = dados_ticker[dados_ticker['Date'] <= data_fim_dt]
+                
                 dados_ticker['Date'] = pd.to_datetime(dados_ticker['Date']).dt.strftime('%d/%m/%Y')
                 dados_ticker['Ticker'] = ticker
 
+                # Reordena as colunas para um formato mais legível
                 standard_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
                 cols_order_start = ['Ticker', 'Date']
                 existing_standard_cols = [col for col in standard_cols if col in dados_ticker.columns]
@@ -337,6 +320,8 @@ def buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresa
                 dados_acoes_dict[ticker] = dados_ticker
             else:
                 erros.append(f"Sem dados de preços históricos encontrados para {ticker} ({ticker_yf}) no período.")
+        except KeyError:
+            erros.append(f"Dados para {ticker} ({ticker_yf}) não encontrados no resultado. O ticker pode ser inválido.")
         except Exception as e:
             error_type = type(e).__name__
             erros.append(f"Erro ao processar dados de preços para {ticker} ({ticker_yf}): {error_type} - {e}")
@@ -405,7 +390,7 @@ if st.button('Buscar Dados', key="search_button"):
 
         with st.spinner('Buscando dados... Por favor, aguarde.'):
             if "Preços Históricos (Yahoo Finance)" in tipos_dados_selecionados:
-                dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresas_df=df_empresas)
+                dados_acoes_dict, erros_acoes = buscar_dados_acoes(tickers_input, data_inicio_input, data_fim_input, empresas_df=df_empresas, st=st)
                 if dados_acoes_dict:
                     st.session_state.todos_dados_acoes = dados_acoes_dict
                 if erros_acoes:
@@ -505,5 +490,5 @@ st.markdown("""
 
 **Fontes dos dados:**
 - Preços Históricos: [Yahoo Finance](https://finance.yahoo.com)
-- Dividendos e Eventos societários: [API B3](https://www.b3.com.br) 
+- Dividendos e Eventos societários: [API B3](https://www.b3.com.br) 
 """)

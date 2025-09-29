@@ -119,7 +119,7 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
                 break
 
             if total_pages > 1:
-                time.sleep(0.5)
+                time.sleep(0.2)
 
             current_page += 1
 

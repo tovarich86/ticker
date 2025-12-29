@@ -155,7 +155,7 @@ st.set_page_config(layout="wide", page_title="Market Data B3/YF")
 st.title('Consulta Consolidada de Dados')
 
 # Aviso de Fonte de Dados (Solicitado)
-st.warning("""
+st.markdown("""
 **Fontes de Dados:**
 * **Ativos Brasileiros (B3):** Abertura, Máxima, Mínima, Fechamento e Volume extraídos diretamente do arquivo oficial **COTAHIST/B3**.
 * **Ativos Internacionais:** Todos os dados providos pelo **Yahoo Finance**.

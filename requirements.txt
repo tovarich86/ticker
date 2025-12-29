@@ -5,3 +5,4 @@ openpyxl
 arch
 xlsxwriter
 curl_cffi
+polars>=1.0.0

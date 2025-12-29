@@ -1,10 +1,10 @@
-# b3_engine.py
 import io, zipfile, datetime, requests, urllib3
 import polars as pl
 from concurrent.futures import ThreadPoolExecutor
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Mapeamento oficial de posições do arquivo COTAHIST da B3
 FIELD_SIZES = {
     'TIPO_DE_REGISTRO': 2, 'DATA_DO_PREGAO': 8, 'CODIGO_BDI': 2,
     'CODIGO_DE_NEGOCIACAO': 12, 'TIPO_DE_MERCADO': 3, 'NOME_DA_EMPRESA': 12,
@@ -21,7 +21,8 @@ FIELD_SIZES = {
 def _calc_pascoa(ano: int):
     a, b, c = ano % 19, ano // 100, ano % 100
     d, e = b // 4, b % 4
-    f, g = (b + 8) // 25, (b - (b + 8) // 25 + 1) // 3
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
     h = (19 * a + b - d - g + 15) % 30
     i, k = c // 4, c % 4
     l = (32 + 2 * e + 2 * i - h - k) % 7
@@ -43,6 +44,18 @@ def obter_feriados_b3(ano: int):
     if ano >= 2024: feriados.append(datetime.date(ano, 11, 20))
     return feriados
 
+def listar_dias_uteis(inicio, fim):
+    dias = []
+    curr = inicio
+    feriados_cache = {}
+    while curr <= fim:
+        if curr.year not in feriados_cache:
+            feriados_cache[curr.year] = obter_feriados_b3(curr.year)
+        if curr.weekday() < 5 and curr not in feriados_cache[curr.year]:
+            dias.append(curr)
+        curr += datetime.timedelta(days=1)
+    return dias
+
 def baixar_e_parsear_dia(data_pregao, tickers_b3, session):
     url = f'https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_D{data_pregao.strftime("%d%m%Y")}.ZIP'
     try:
@@ -61,8 +74,10 @@ def baixar_e_parsear_dia(data_pregao, tickers_b3, session):
         return df_filtered.with_columns(slices).drop('raw').with_columns([
             pl.col('DATA_DO_PREGAO').str.to_date('%Y%m%d').alias('Date'),
             pl.col('CODIGO_DE_NEGOCIACAO').alias('Ticker'),
-            pl.col('PRECO_ULTIMO_NEGOCIO').cast(pl.Float64).truediv(100).alias('Close')
-            pl.col('VOLUME_TOTAL_NEGOCIADO').cast(pl.Float64).truediv(100).alias('Close')
-            # ... adicione Open, High, Low, Volume se necessário
-        ]).to_pandas()
+            pl.col('PRECO_DE_ABERTURA').cast(pl.Float64).truediv(100).alias('Open'),
+            pl.col('PRECO_MAXIMO').cast(pl.Float64).truediv(100).alias('High'),
+            pl.col('PRECO_MINIMO').cast(pl.Float64).truediv(100).alias('Low'),
+            pl.col('PRECO_ULTIMO_NEGOCIO').cast(pl.Float64).truediv(100).alias('Close'),
+            pl.col('VOLUME_TOTAL_NEGOCIADO').cast(pl.Float64).alias('Volume')
+        ]).select(['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume']).to_pandas()
     except: return None

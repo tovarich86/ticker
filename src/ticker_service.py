@@ -1,19 +1,4 @@
-# Arquivo: src/ticker_service.py
 import pandas as pd
-import yfinance as yf
-import requests
-import json
-from base64 import b64encode
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
-from curl_cffi import requests as curl_requests
-import streamlit as st 
-
-# Importa o motor de baixo nível que já configuramos
-from src import b3_engine
-
-# URL do arquivo no GitHub (Mesma da versão antiga)
-URL_EMPRESAS = "import pandas as pd
 import yfinance as yf
 import requests
 import json

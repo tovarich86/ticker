@@ -1,26 +1,26 @@
 # Arquivo: src/ibge_service.py
 import requests
 import pandas as pd
+import streamlit as st # Necessário para o cache
 from datetime import datetime, timedelta
 
+# O cache evita baixar de novo ao trocar de página
+@st.cache_data(ttl=86400, show_spinner=False)
 def carregar_dados_ipca():
-    """Baixa a série histórica do IPCA diretamente do SIDRA/IBGE."""
+    """Baixa a série histórica do IPCA diretamente do SIDRA/IBGE (Cacheado)."""
     url = "https://apisidra.ibge.gov.br/values/t/1737/n1/all/v/all/p/all/d/v63%202,v69%202,v2266%2013,v2263%202,v2264%202,v2265%202?formato=json"
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         dados_json = response.json()
         
         df = pd.DataFrame(dados_json[1:])
         df = df[df['D2C'] == '2266'] # Filtra o índice geral
         
-        # Converte a data "YYYYMM" para datetime
-        def _parse_data(codigo):
-            c = str(codigo)
-            return datetime(int(c[:4]), int(c[4:6]), 1)
-            
-        df['data'] = df['D3C'].apply(_parse_data)
+        # Otimização: Vetorização na conversão de datas
+        df['data'] = pd.to_datetime(df['D3C'], format='%Y%m')
         df['valor'] = pd.to_numeric(df['V'], errors='coerce')
+        
         df = df.sort_values('data').reset_index(drop=True)
         return df
     except Exception as e:
@@ -28,7 +28,10 @@ def carregar_dados_ipca():
         return pd.DataFrame()
 
 def calcular_correcao_ipca(df_ipca, data_inicial, data_final, valor_inicial):
-    """Realiza o cálculo de correção monetária entre duas datas."""
+    """
+    Realiza o cálculo de correção monetária entre duas datas.
+    (Esta função é rápida, não precisa de cache, apenas os dados brutos precisam).
+    """
     # Busca índice do mês ANTERIOR ao inicial (base do cálculo)
     mes_anterior = data_inicial - timedelta(days=1)
     mes_anterior = datetime(mes_anterior.year, mes_anterior.month, 1)

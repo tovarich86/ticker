@@ -1,42 +1,49 @@
 # Arquivo: src/treasury_service.py
-import requests
 import pandas as pd
+import polars as pl
 import numpy as np
-from io import StringIO
+import streamlit as st
 from scipy.spatial import cKDTree
 
 CSV_TESOURO_URL = "https://www.tesourotransparente.gov.br/ckan/dataset/df56aa42-484a-4a59-8184-7676580c81e3/resource/796d2059-14e9-44e3-80c9-2d9e30b405c1/download/PrecoTaxaTesouroDireto.csv"
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def carregar_dados_tesouro():
-    """Baixa e faz parse inicial do CSV do Tesouro Direto."""
+    """
+    Baixa dados do Tesouro usando Polars para alta performance e cacheia o resultado.
+    """
     try:
-        response = requests.get(CSV_TESOURO_URL, timeout=30)
-        response.raise_for_status()
-        
-        # O Tesouro usa CSV com ; e vírgula decimal
-        df = pd.read_csv(
-            StringIO(response.text), 
-            sep=';', 
+        # Polars lê diretamente da URL muito mais rápido que requests+pandas
+        df_pl = pl.read_csv(
+            CSV_TESOURO_URL, 
+            separator=';', 
             decimal=',', 
-            parse_dates=['Data Base', 'Data Vencimento'], 
-            dayfirst=True
+            ignore_errors=True,
+            try_parse_dates=True
         )
+        
+        # Convertemos para Pandas aqui para manter compatibilidade com a lógica matemática existente
+        # e garantir os tipos de data corretos
+        df = df_pl.to_pandas()
+        
+        # Garante a conversão correta das datas (Polars às vezes deixa como string se o formato variar)
+        df['Data Base'] = pd.to_datetime(df['Data Base'], dayfirst=True, errors='coerce')
+        df['Data Vencimento'] = pd.to_datetime(df['Data Vencimento'], dayfirst=True, errors='coerce')
+        
         return df
     except Exception as e:
-        print(f"Erro Tesouro: {e}")
+        print(f"Erro Tesouro (Polars): {e}")
         return pd.DataFrame()
 
 def calcular_inflacao_implicita(df_raw, data_base_ref):
     """
-    Filtra os dados para uma data específica e cruza títulos Prefixados com IPCA+
-    para encontrar a inflação implícita.
+    Lógica matemática de interpolação (Mantida em Pandas/Scipy pois opera em memória pequena filtrada).
     """
     # 1. Filtra pela Data Base selecionada
     df_dia = df_raw[df_raw["Data Base"] == data_base_ref].copy()
     if df_dia.empty: return pd.DataFrame(), "Sem dados para esta data."
 
     # 2. Separa Prefixados vs IPCA+
-    # Remove "Juros Semestrais" para simplificar a curva padrão (opcional, mas comum na metodologia)
     mask_pre = df_dia["Tipo Titulo"].str.contains("Prefixado", case=False, na=False) & \
                ~df_dia["Tipo Titulo"].str.contains("Juros Semestrais", case=False, na=False)
     
@@ -48,18 +55,20 @@ def calcular_inflacao_implicita(df_raw, data_base_ref):
     if df_pre.empty or df_ipca.empty:
         return pd.DataFrame(), "Faltam dados de Prefixado ou IPCA+ para cálculo."
 
-    # 3. Prepara interpolação (busca do vizinho mais próximo por data de vencimento)
+    # 3. Prepara interpolação
     df_ipca["Vencimento_Num"] = df_ipca["Data Vencimento"].dt.strftime("%Y%m%d").astype(int)
     df_pre["Vencimento_Num"] = df_pre["Data Vencimento"].dt.strftime("%Y%m%d").astype(int)
+
+    # Verifica se há dados suficientes para interpolação
+    if len(df_ipca) < 2:
+         return pd.DataFrame(), "Poucos vértices IPCA+ para interpolação."
 
     df_ipca_sorted = df_ipca.sort_values("Vencimento_Num")
     vencimentos_ipca = df_ipca_sorted["Vencimento_Num"].values.reshape(-1, 1)
     
-    # Árvore de busca rápida
     tree = cKDTree(vencimentos_ipca)
 
     def _match_ipca(vencimento_num):
-        # Encontra o índice do título IPCA+ com vencimento mais próximo
         _, idx = tree.query([[vencimento_num]])
         row = df_ipca_sorted.iloc[idx[0]]
         return row["Data Vencimento"], row["Taxa Compra Manha"]
@@ -69,7 +78,7 @@ def calcular_inflacao_implicita(df_raw, data_base_ref):
     for idx, row in df_pre.iterrows():
         venc_match, taxa_ipca = _match_ipca(row["Vencimento_Num"])
         
-        # Fórmula de Fisher: (1 + Pre) / (1 + Real) - 1
+        # Fórmula de Fisher
         inflacao = ((1 + row["Taxa Compra Manha"] / 100) / (1 + taxa_ipca / 100) - 1) * 100
         
         resultados.append({

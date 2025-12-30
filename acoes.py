@@ -41,8 +41,7 @@ with col1:
     Expectativa do mercado para a taxa Selic no futuro.
     * **Fonte Oficial:** Dados de Preços Referenciais da B3.
     * **Histórico:** Permite baixar a curva de qualquer data passada.
-    * **Bulk Download:** Processe múltiplas datas via arquivo Excel.
-    
+      
     👉 *Acesse no menu lateral: **Taxas DI1***
     """)
 
@@ -53,7 +52,7 @@ with col2:
     
    Inflação que o mercado está precificando a  partir da taxa pré e pós fixada.
     * **Metodologia:** Diferença entre Taxa Prefixada e Taxa IPCA+ (Fisher).
-    * **Interpolação:** Cruzamento inteligente de vértices de vencimento.
+    * **Interpolação:** Cruzamento de vértices de vencimento.
     
     👉 *Acesse no menu lateral: **Inflação Implícita***
     """)
@@ -65,8 +64,7 @@ with col2:
     Atualize valores monetários pela inflação oficial.
     * **Dados:** API Oficial do SIDRA/IBGE.
     * **Flexibilidade:** Permite adicionar juros prefixados ao cálculo.
-    * **Memória:** Tabela detalhada mês a mês.
-    
+       
     👉 *Acesse no menu lateral: **Calculadora IPCA***
     """)
 

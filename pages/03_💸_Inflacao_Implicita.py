@@ -17,8 +17,8 @@ st.set_page_config(page_title="Inflação Implícita", layout="wide")
 st.title("📊 Cálculo da Inflação Implícita")
 
 st.markdown("""
-A **Inflação Implícita** é a expectativa de inflação do mercado (Break-even inflation), 
-calculada pela diferença entre as taxas dos títulos **Prefixados** e **Tesouro IPCA+**.
+A **Inflação Implícita** (ou *Break-even Inflation*) representa a média da inflação esperada pelo mercado para um determinado prazo.
+Ela é obtida através da diferença (spread) entre as taxas dos títulos **Prefixados** (Nominal) e **Tesouro IPCA+** (Real).
 """)
 
 # --- BLOCO DE SEGURANÇA GERAL ---
@@ -73,17 +73,34 @@ try:
             if erro:
                 st.warning(f"⚠️ {erro}")
             else:
-                # Formatação Visual
+                # --- EXIBIÇÃO DA FÓRMULA (NOVA SEÇÃO) ---
+                with st.expander("📝 Metodologia de Cálculo (Equação de Fisher)", expanded=True):
+                    col_f1, col_f2 = st.columns([1, 1])
+                    with col_f1:
+                        st.markdown("O cálculo utiliza a relação entre juros nominais e reais:")
+                        st.latex(r"""
+                        \text{Inflação Implícita} = \left( \frac{1 + \text{Taxa Prefixada}}{1 + \text{Taxa IPCA+}} \right) - 1
+                        """)
+                    with col_f2:
+                        st.info("""
+                        **Lógica:**
+                        1. Selecionamos os títulos **Prefixados** disponíveis na data.
+                        2. Cruzamos com os títulos **IPCA+** de vencimento equivalente (usando interpolação).
+                        3. A diferença entre o que o mercado paga fixo e o que paga acima da inflação é a **Inflação Esperada**.
+                        """)
+
+                # --- FORMATAÇÃO VISUAL ---
                 df_show = df_resultado.copy()
                 cols_data = ["Data Base", "Vencimento Prefixado", "Vencimento IPCA+ Ref"]
                 for col in cols_data:
                     df_show[col] = df_show[col].dt.strftime("%d/%m/%Y")
                 
-                df_show["Inflação Implícita (%)"] = df_show["Inflação Implícita (%)"].map("{:.2f}%".format)
-                df_show["Taxa Prefixada"] = df_show["Taxa Prefixada"].map("{:.2f}%".format)
-                df_show["Taxa IPCA+"] = df_show["Taxa IPCA+"].map("{:.2f}%".format)
+                # Formatação percentual
+                cols_pct = ["Inflação Implícita (%)", "Taxa Prefixada", "Taxa IPCA+"]
+                for col in cols_pct:
+                    df_show[col] = df_show[col].map("{:.2f}%".format)
 
-                st.success(f"Cálculo realizado para {data_selecionada.strftime('%d/%m/%Y')}")
+                st.subheader(f"Resultados para {data_selecionada.strftime('%d/%m/%Y')}")
                 st.dataframe(df_show, use_container_width=True)
 
                 # Botão Excel

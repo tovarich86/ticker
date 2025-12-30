@@ -195,6 +195,12 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
             for t in list_b3:
                 df_t = df_b3_total[df_b3_total['Ticker'] == t].copy()
                 if not df_t.empty:
+                    # --- CORREÇÃO DO ERRO RESET_INDEX ---
+                    # 1. Converte para datetime
+                    df_t['Date'] = pd.to_datetime(df_t['Date'])
+                    # 2. Move para o índice (remove da coluna, evitando duplicação)
+                    df_t = df_t.set_index('Date')
+                    
                     ticker_sa = f"{t}.SA"
                     col_adj = None
                     
@@ -204,13 +210,14 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
                         elif ticker_sa in adj_data.columns:
                             col_adj = adj_data[ticker_sa]
                     
-                    df_t = df_t.set_index(pd.to_datetime(df_t['Date']))
+                    # 3. Reindexa e atribui Adj Close
                     df_t['Adj Close'] = col_adj.reindex(df_t.index) if col_adj is not None else float('nan')
+                    
+                    # 4. Reseta índice (traz Date de volta como coluna sem conflito)
                     df_t = df_t.reset_index()
                     df_t['Date'] = df_t['Date'].dt.strftime('%d/%m/%Y')
                     
                     cols = ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-                    # Garante que só seleciona colunas existentes
                     cols_existentes = [c for c in cols if c in df_t.columns]
                     resultados[t] = df_t[cols_existentes]
         else:

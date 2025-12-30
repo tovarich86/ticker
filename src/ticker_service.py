@@ -7,185 +7,242 @@ from base64 import b64encode
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from curl_cffi import requests as curl_requests
-import streamlit as st # Apenas para o cache
+import streamlit as st 
 
-# Importa o motor de baixo nível que já criamos
+# Importa o motor de baixo nível que já configuramos
 from src import b3_engine
 
+# URL do arquivo no GitHub (Mesma da versão antiga)
 URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/empresas_b3%20(6).xlsx"
 
 @st.cache_data(ttl=3600)
-def carregar_empresas():
-    """Baixa e trata a planilha de empresas listadas."""
+def carregar_empresas(arquivo_upload=None):
+    """
+    Tenta carregar a base de empresas.
+    Prioridade: 1. Upload Manual (se houver falha no GitHub) -> 2. Download GitHub.
+    """
+    df = pd.DataFrame()
+    fonte = ""
+
     try:
-        df = pd.read_excel(URL_EMPRESAS)
-        # Tratamento de strings
-        cols = ['Nome do Pregão', 'Tickers', 'CODE', 'typeStock']
-        for c in cols:
-            if c in df.columns:
-                df[c] = df[c].astype(str).fillna('').str.strip().str.upper()
+        # 1. Tenta carregar do Upload ou do GitHub
+        if arquivo_upload:
+            fonte = "Arquivo Local"
+            df = pd.read_excel(arquivo_upload)
+        else:
+            fonte = "GitHub"
+            # O engine='openpyxl' é mais robusto para xlsx modernos
+            df = pd.read_excel(URL_EMPRESAS, engine='openpyxl')
+
+        # 2. Verificação de Segurança (O Pulo do Gato para evitar KeyError)
+        if df.empty:
+            return pd.DataFrame() # Retorna vazio tratado
+
+        # Limpa espaços nos nomes das colunas (ex: "Tickers " -> "Tickers")
+        df.columns = df.columns.str.strip()
+
+        # Se a coluna 'Tickers' não existir, algo está errado com o arquivo
+        if 'Tickers' not in df.columns:
+            st.error(f"⚠️ Erro: Coluna 'Tickers' não encontrada na fonte {fonte}.")
+            return pd.DataFrame()
+
+        # 3. Processamento de Dados (Lógica original da versão antiga)
+        cols_to_process = ['Nome do Pregão', 'Tickers', 'CODE', 'typeStock']
+        for col in cols_to_process:
+            if col in df.columns:
+                df[col] = df[col].astype(str).fillna('').str.strip()
+                if col == 'Nome do Pregão':
+                    df[col] = df[col].str.replace(r'\s*S\.?A\.?/A?', ' S.A.', regex=True).str.upper()
+                if col == 'typeStock':
+                    df[col] = df[col].str.upper()
         
-        # Ajuste específico de S.A.
-        if 'Nome do Pregão' in df.columns:
-            df['Nome do Pregão'] = df['Nome do Pregão'].str.replace(r'\s*S\.?A\.?/A?', ' S.A.', regex=True)
-            
+        # Filtra linhas inválidas
         return df[(df['Tickers'] != '') & (df['Nome do Pregão'] != '')]
+
     except Exception as e:
-        print(f"Erro ao carregar empresas: {e}")
+        # Não exibe erro na tela imediatamente para permitir o fluxo de fallback na página
+        print(f"Erro ao carregar empresas ({fonte}): {e}")
         return pd.DataFrame()
 
-def _get_ticker_info(ticker, df_empresas):
-    """Helper para encontrar códigos internos da B3 (CVM/ISIN) pelo Ticker."""
-    t_upper = ticker.strip().upper()
+def get_ticker_info(ticker, df_empresas):
+    """Busca informações do ticker de forma segura."""
+    if df_empresas.empty: return None
+    
+    ticker_upper = ticker.strip().upper()
+    
+    # Itera com segurança
     for _, row in df_empresas.iterrows():
-        lista = [x.strip() for x in row['Tickers'].split(',')]
-        if t_upper in lista:
+        # Garante que é string antes de fazer split
+        val_tickers = str(row['Tickers']) 
+        tickers_list = [t.strip().upper() for t in val_tickers.split(",") if t.strip()]
+        
+        if ticker_upper in tickers_list:
             return {
-                'trading_name': row['Nome do Pregão'], 
-                'code': row['CODE'], 
-                'type_stock': row['typeStock']
+                'trading_name': row.get('Nome do Pregão', ''), 
+                'code': row.get('CODE', ''), 
+                'type_stock': row.get('typeStock', '')
             }
     return None
 
-def buscar_proventos_b3(ticker, tipo, df_empresas, dt_ini, dt_fim):
-    """Busca Dividendos ou Bonificações na API da B3 (usando curl_cffi para bypass)."""
-    info = _get_ticker_info(ticker, df_empresas)
-    if not info: return pd.DataFrame()
+def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
+    """Busca Dividendos mantendo o uso do curl_cffi da versão antiga."""
+    if empresas_df.empty: return pd.DataFrame()
+
+    ticker_info = get_ticker_info(ticker, empresas_df)
+    if not ticker_info: return pd.DataFrame()
+    
+    trading_name = ticker_info['trading_name']
+    desired_type_stock = ticker_info['type_stock']
+    
+    # Mantém o impersonate para evitar bloqueio da B3
+    session = curl_requests.Session(impersonate="chrome")
+    try:
+        params = {"language": "pt-br", "pageNumber": "1", "pageSize": "50", "tradingName": trading_name}
+        # Codificação correta para a API da B3
+        params_encoded = b64encode(json.dumps(params).encode('utf-8')).decode('utf-8')
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
+        
+        response = session.get(url, timeout=20)
+        res_json = response.json()
+        
+        if 'results' in res_json:
+            df = pd.DataFrame(res_json['results'])
+            if df.empty: return pd.DataFrame()
+            
+            # Filtro por tipo de ação (ON/PN)
+            if 'typeStock' in df.columns:
+                df['typeStock'] = df['typeStock'].str.strip().str.upper()
+                df = df[df['typeStock'] == desired_type_stock].copy()
+            
+            df['lastDatePriorEx_dt'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
+            df = df[(df['lastDatePriorEx_dt'] >= data_inicio) & (df['lastDatePriorEx_dt'] <= data_fim)]
+            return df.drop(columns=['lastDatePriorEx_dt'])
+    except Exception: 
+        return pd.DataFrame()
+    return pd.DataFrame()
+
+def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
+    """Busca Bonificações (Lógica original preservada)."""
+    if empresas_df.empty: return pd.DataFrame()
+
+    ticker_info = get_ticker_info(ticker, empresas_df)
+    if not ticker_info or not ticker_info.get('code'): return pd.DataFrame()
     
     session = curl_requests.Session(impersonate="chrome")
     try:
-        if tipo == 'Dividendos':
-            # Endpoint de Dividendos
-            params = {"language": "pt-br", "pageNumber": "1", "pageSize": "50", "tradingName": info['trading_name']}
-            p_b64 = b64encode(json.dumps(params).encode()).decode()
-            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{p_b64}'
-            col_data = 'lastDatePriorEx'
+        params = {"issuingCompany": ticker_info['code'], "language": "pt-br"}
+        params_encoded = b64encode(json.dumps(params).encode('utf-8')).decode('utf-8')
+        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
+        
+        response = session.get(url, timeout=20)
+        data = response.json()
+        
+        if data and "stockDividends" in data[0]:
+            df = pd.DataFrame(data[0]["stockDividends"])
+            if df.empty: return pd.DataFrame()
             
-        elif tipo == 'Bonificacoes':
-            # Endpoint de Bonificações
-            if not info.get('code'): return pd.DataFrame()
-            params = {"issuingCompany": info['code'], "language": "pt-br"}
-            p_b64 = b64encode(json.dumps(params).encode()).decode()
-            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{p_b64}'
-            col_data = 'lastDatePrior'
-        
-        # Requisição
-        res = session.get(url, timeout=20)
-        data_json = res.json()
-        
-        # Parser específico
-        df = pd.DataFrame()
-        if tipo == 'Dividendos' and 'results' in data_json:
-            df = pd.DataFrame(data_json['results'])
-            if not df.empty:
-                df['typeStock'] = df['typeStock'].str.strip().str.upper()
-                df = df[df['typeStock'] == info['type_stock']]
-                
-        elif tipo == 'Bonificacoes' and data_json and "stockDividends" in data_json[0]:
-            df = pd.DataFrame(data_json[0]["stockDividends"])
-
-        if df.empty: return pd.DataFrame()
-
-        # Filtro de Data
-        df['data_ref'] = pd.to_datetime(df[col_data], format='%d/%m/%Y', errors='coerce')
-        df = df[(df['data_ref'] >= dt_ini) & (df['data_ref'] <= dt_fim)]
-        return df.drop(columns=['data_ref'])
-
-    except Exception as e:
-        print(f"Erro proventos ({tipo}): {e}")
+            df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
+            df = df[(df['lastDatePrior_dt'] >= data_inicio) & (df['lastDatePrior_dt'] <= data_fim)]
+            return df.drop(columns=['lastDatePrior_dt'])
+    except Exception: 
         return pd.DataFrame()
+    return pd.DataFrame()
 
-def buscar_cotacoes_hibrido(tickers_str, dt_ini_str, dt_fim_str, df_empresas):
+def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
     """
-    Lógica principal:
-    1. Identifica quais tickers são brasileiros (B3).
-    2. Para B3: Baixa o ZIP oficial (b3_engine) para pegar OHLC + Volume.
-    3. Para B3: Usa Yahoo apenas para pegar o 'Adj Close'.
-    4. Para Gringos: Usa Yahoo para tudo.
+    Lógica Híbrida Original: B3 (Engine) + Yahoo (Adj Close e Internacionais).
     """
-    tickers = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
+    # Verificação crítica para evitar o KeyError 'Tickers'
+    if empresas_df.empty:
+        return {}, ["Erro: Base de empresas não carregada. Faça o upload manual na tela."]
+
+    tickers_list = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
     d_ini = datetime.strptime(dt_ini_str, "%d/%m/%Y").date()
     d_fim = datetime.strptime(dt_fim_str, "%d/%m/%Y").date()
     
-    # Separa B3 de Internacional
-    todos_b3 = set()
-    for row in df_empresas['Tickers'].dropna():
-        for t in row.split(','): todos_b3.add(t.strip().upper())
-        
-    list_b3 = [t for t in tickers if t in todos_b3]
-    list_yf = [t for t in tickers if t not in todos_b3]
+    # Identificação B3 vs Internacional
+    b3_tickers_set = set()
+    if 'Tickers' in empresas_df.columns:
+        for row in empresas_df['Tickers'].dropna().astype(str).str.split(','):
+            for t in row: b3_tickers_set.add(t.strip().upper())
+    
+    list_b3 = [t for t in tickers_list if t in b3_tickers_set]
+    list_yf = [t for t in tickers_list if t not in b3_tickers_set]
     
     resultados = {}
     erros = []
 
-    # --- PROCESSAMENTO B3 ---
+    # 1. B3 (Engine + Yahoo Adj Close)
     if list_b3:
-        # 1. Dados Brutos (Engine)
-        dias = b3_engine.listar_dias_uteis(d_ini, d_fim)
-        frames = []
-        with requests.Session() as s:
-            with ThreadPoolExecutor(max_workers=5) as pool:
-                # Chama o b3_engine que criamos no Passo 2
-                futures = [pool.submit(b3_engine.baixar_e_parsear_dia, d, list_b3, s) for d in dias]
+        # Chama o motor B3 (b3_engine.py)
+        dias_uteis = b3_engine.listar_dias_uteis(d_ini, d_fim)
+        frames_b3 = []
+        with requests.Session() as session:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(b3_engine.baixar_e_parsear_dia, d, list_b3, session) for d in dias_uteis]
                 for f in futures:
                     res = f.result()
-                    if res is not None: frames.append(res)
+                    if res is not None: frames_b3.append(res)
         
-        if frames:
-            df_total = pd.concat(frames)
+        if frames_b3:
+            df_b3_total = pd.concat(frames_b3)
             
-            # 2. Adj Close (Yahoo)
+            # Yahoo Adj Close
             sa_tickers = [f"{t}.SA" for t in list_b3]
+            adj_data = pd.DataFrame()
             try:
-                yf_data = yf.download(sa_tickers, start=d_ini, end=d_fim + timedelta(days=5), progress=False)['Adj Close']
-            except: yf_data = pd.DataFrame()
+                yf_res = yf.download(sa_tickers, start=d_ini, end=d_fim + timedelta(days=5), progress=False)
+                if not yf_res.empty:
+                    adj_data = yf_res['Adj Close'] if 'Adj Close' in yf_res.columns else yf_res['Close']
+            except Exception as e:
+                erros.append(f"Aviso Yahoo (Adj): {e}")
 
-            # 3. Merge
             for t in list_b3:
-                df_t = df_total[df_total['Ticker'] == t].copy()
+                df_t = df_b3_total[df_b3_total['Ticker'] == t].copy()
                 if not df_t.empty:
-                    df_t['Date'] = pd.to_datetime(df_t['Date'])
-                    df_t = df_t.set_index('Date').sort_index()
-                    
-                    # Tenta casar o Adj Close
-                    col_adj = None
                     ticker_sa = f"{t}.SA"
-                    if not yf_data.empty:
-                        if isinstance(yf_data, pd.Series): col_adj = yf_data
-                        elif ticker_sa in yf_data.columns: col_adj = yf_data[ticker_sa]
+                    col_adj = None
                     
-                    if col_adj is not None:
-                        # Reindexa para garantir alinhamento de datas
-                        df_t['Adj Close'] = col_adj.reindex(df_t.index)
-                    else:
-                        df_t['Adj Close'] = float('nan')
+                    if not adj_data.empty:
+                        if isinstance(adj_data, pd.Series): # Apenas 1 ticker
+                            col_adj = adj_data
+                        elif ticker_sa in adj_data.columns:
+                            col_adj = adj_data[ticker_sa]
                     
-                    resultados[t] = df_t.reset_index()
+                    df_t = df_t.set_index(pd.to_datetime(df_t['Date']))
+                    df_t['Adj Close'] = col_adj.reindex(df_t.index) if col_adj is not None else float('nan')
+                    df_t = df_t.reset_index()
+                    df_t['Date'] = df_t['Date'].dt.strftime('%d/%m/%Y')
+                    
+                    # Garante ordenação das colunas
+                    cols = ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+                    resultados[t] = df_t[[c for c in cols if c in df_t.columns]]
         else:
-            erros.append("B3: Nenhum dado encontrado nos boletins oficiais para o período.")
+            erros.append("B3: Sem dados oficiais (feriado ou falha no download do ZIP).")
 
-    # --- PROCESSAMENTO YAHOO (Internacional) ---
+    # 2. Yahoo (Internacional)
     if list_yf:
         try:
-            df_yf = yf.download(list_yf, start=d_ini, end=d_fim + timedelta(days=1), progress=False)
-            if not df_yf.empty:
-                # Tratamento para MultiIndex do Yahoo novo
-                if isinstance(df_yf.columns, pd.MultiIndex):
-                    # Se tiver mais de um ticker, o nível 1 é o ticker
-                    # Lógica simplificada: itera sobre os tickers pedidos
+            dados_yf = yf.download(list_yf, start=d_ini, end=d_fim + timedelta(days=1), progress=False)
+            if not dados_yf.empty:
+                # Tratamento para Yahoo novo (MultiIndex)
+                if isinstance(dados_yf.columns, pd.MultiIndex):
                     for t in list_yf:
                         try:
-                            # Tenta extrair cross-section
-                            df_t = df_yf.xs(t, axis=1, level=1).copy()
+                            df_t = dados_yf.xs(t, axis=1, level=1).copy()
                             df_t['Ticker'] = t
-                            resultados[t] = df_t.reset_index()
+                            df_t = df_t.reset_index()
+                            df_t['Date'] = df_t['Date'].dt.strftime('%d/%m/%Y')
+                            if 'Adj Close' not in df_t.columns: df_t['Adj Close'] = df_t['Close']
+                            resultados[t] = df_t
                         except: pass
                 else:
-                    # Apenas 1 ticker
                     t = list_yf[0]
-                    df_yf['Ticker'] = t
-                    resultados[t] = df_yf.reset_index()
+                    dados_yf['Ticker'] = t
+                    dados_yf = dados_yf.reset_index()
+                    dados_yf['Date'] = dados_yf['Date'].dt.strftime('%d/%m/%Y')
+                    resultados[t] = dados_yf
         except Exception as e:
-            erros.append(f"Yahoo Error: {e}")
+            erros.append(f"Erro Yahoo Intl: {e}")
 
     return resultados, erros

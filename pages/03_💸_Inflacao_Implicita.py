@@ -1,109 +1,103 @@
-import requests
-import pandas as pd
 import streamlit as st
-from io import StringIO
-from scipy.spatial import cKDTree
+import pandas as pd
+from io import BytesIO
+import sys
+import os
 
-# URL oficial do Histórico de Preços e Taxas
-CSV_TESOURO_URL = "https://www.tesourotransparente.gov.br/ckan/dataset/df56aa42-484a-4a59-8184-7676580c81e3/resource/796d2059-14e9-44e3-80c9-2d9e30b405c1/download/PrecoTaxaTesouroDireto.csv"
+# Garante que o Python encontre a pasta src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def carregar_dados_tesouro(arquivo_manual=None):
-    """
-    Baixa dados do Tesouro usando a lógica clássica (Requests + Pandas).
-    Removemos o Polars para garantir estabilidade máxima.
-    """
-    try:
+try:
+    from src.treasury_service import carregar_dados_tesouro, calcular_inflacao_implicita, CSV_TESOURO_URL
+except ImportError:
+    st.error("Erro crítico: Não foi possível importar `src.treasury_service`. Verifique se o arquivo existe.")
+    st.stop()
+
+st.set_page_config(page_title="Inflação Implícita", layout="wide")
+st.title("📊 Cálculo da Inflação Implícita")
+
+st.markdown("""
+A **Inflação Implícita** é a expectativa de inflação do mercado (Break-even inflation), 
+calculada pela diferença entre as taxas dos títulos **Prefixados** e **Tesouro IPCA+**.
+""")
+
+# --- BLOCO DE SEGURANÇA GERAL ---
+try:
+    # 1. TENTATIVA DE DOWNLOAD AUTOMÁTICO
+    with st.spinner("Conectando ao Tesouro Nacional (pode levar alguns segundos)..."):
+        df_raw = carregar_dados_tesouro()
+
+    # 2. SE FALHAR (DATAFRAME VAZIO), ACIONA O PLANO B
+    if df_raw.empty:
+        st.warning("⚠️ O sistema do Tesouro Direto não respondeu ou bloqueou o download automático.")
+        st.markdown("### 📂 Solução Manual")
+        st.markdown(f"1. Baixe o arquivo **PrecoTaxaTesouroDireto.csv** [neste link oficial]({CSV_TESOURO_URL}).")
+        st.markdown("2. Faça o upload do arquivo abaixo:")
+        
+        arquivo_manual = st.file_uploader("Arraste o arquivo CSV aqui", type=['csv'])
+        
         if arquivo_manual:
-            # Se o usuário fez upload, lê diretamente com Pandas
-            return pd.read_csv(
-                arquivo_manual, 
-                sep=';', 
-                decimal=',', 
-                parse_dates=['Data Base', 'Data Vencimento'], 
-                dayfirst=True
-            )
+            df_raw = carregar_dados_tesouro(arquivo_manual)
+            if df_raw.empty:
+                st.error("O arquivo enviado parece inválido ou vazio.")
+                st.stop()
+            else:
+                st.success("Arquivo carregado com sucesso!")
         else:
-            # Lógica Original: Requests + StringIO + Pandas
-            # Mantemos apenas os headers e verify=False para evitar bloqueio do site .gov
-            headers = {
-                "User-Agent": "Mozilla/5.0"
-            }
-            
-            response = requests.get(CSV_TESOURO_URL, headers=headers, verify=False, timeout=60)
-            response.raise_for_status()
-            
-            # O Pandas lê diretamente o texto retornado
-            csv_data = StringIO(response.text)
-            
-            df = pd.read_csv(
-                csv_data, 
-                sep=';', 
-                decimal=',', 
-                parse_dates=['Data Base', 'Data Vencimento'], 
-                dayfirst=True
+            st.info("Aguardando upload para continuar...")
+            st.stop()
+
+    # 3. SELEÇÃO DE DATA E CÁLCULO
+    if not df_raw.empty:
+        # Garante que a coluna de data está correta
+        df_raw["Data Base"] = pd.to_datetime(df_raw["Data Base"], errors='coerce')
+        df_raw = df_raw.dropna(subset=["Data Base"])
+        
+        datas_disponiveis = df_raw["Data Base"].sort_values(ascending=False).unique()
+        
+        st.divider()
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            data_selecionada = st.selectbox(
+                "📅 Data de Referência:",
+                options=datas_disponiveis,
+                format_func=lambda x: x.strftime("%d/%m/%Y"),
+                index=0
             )
-            
-            return df.dropna(subset=['Data Base'])
 
-    except Exception as e:
-        print(f"Erro ao carregar Tesouro: {e}")
-        return pd.DataFrame()
+        if data_selecionada:
+            with st.spinner("Calculando curvas..."):
+                df_resultado, erro = calcular_inflacao_implicita(df_raw, data_selecionada)
 
-def calcular_inflacao_implicita(df_raw, data_base_ref):
-    """
-    Lógica de cálculo (Matemática Financeira).
-    """
-    # 1. Filtra pela Data Base selecionada
-    df_dia = df_raw[df_raw["Data Base"] == data_base_ref].copy()
-    
-    if df_dia.empty: 
-        return pd.DataFrame(), "Sem dados para a data selecionada."
+            if erro:
+                st.warning(f"⚠️ {erro}")
+            else:
+                # Formatação Visual
+                df_show = df_resultado.copy()
+                cols_data = ["Data Base", "Vencimento Prefixado", "Vencimento IPCA+ Ref"]
+                for col in cols_data:
+                    df_show[col] = df_show[col].dt.strftime("%d/%m/%Y")
+                
+                df_show["Inflação Implícita (%)"] = df_show["Inflação Implícita (%)"].map("{:.2f}%".format)
+                df_show["Taxa Prefixada"] = df_show["Taxa Prefixada"].map("{:.2f}%".format)
+                df_show["Taxa IPCA+"] = df_show["Taxa IPCA+"].map("{:.2f}%".format)
 
-    # 2. Separa Prefixados vs IPCA+
-    mask_pre = df_dia["Tipo Titulo"].str.contains("Prefixado", case=False, na=False) & \
-               ~df_dia["Tipo Titulo"].str.contains("Juros Semestrais", case=False, na=False)
-    
-    mask_ipca = df_dia["Tipo Titulo"].str.contains("Tesouro IPCA\\+$", regex=True, case=False, na=False)
+                st.success(f"Cálculo realizado para {data_selecionada.strftime('%d/%m/%Y')}")
+                st.dataframe(df_show, use_container_width=True)
 
-    df_pre = df_dia[mask_pre].copy()
-    df_ipca = df_dia[mask_ipca].copy()
+                # Botão Excel
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                    df_resultado.to_excel(writer, index=False, sheet_name="Inflacao_Implicita")
+                
+                st.download_button(
+                    label="📥 Baixar Resultado em Excel",
+                    data=output.getvalue(),
+                    file_name=f"inflacao_implicita_{data_selecionada.strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
-    if df_pre.empty or df_ipca.empty:
-        return pd.DataFrame(), "Faltam vértices (Prefixado ou IPCA+) nesta data para o cálculo."
-
-    # 3. Prepara interpolação
-    df_ipca["Vencimento_Num"] = df_ipca["Data Vencimento"].dt.strftime("%Y%m%d").astype(int)
-    df_pre["Vencimento_Num"] = df_pre["Data Vencimento"].dt.strftime("%Y%m%d").astype(int)
-
-    if len(df_ipca) < 2:
-         return pd.DataFrame(), "Poucos títulos IPCA+ para criar a curva de juros."
-
-    df_ipca_sorted = df_ipca.sort_values("Vencimento_Num")
-    vencimentos_ipca = df_ipca_sorted["Vencimento_Num"].values.reshape(-1, 1)
-    
-    tree = cKDTree(vencimentos_ipca)
-
-    def _match_ipca(vencimento_num):
-        _, idx = tree.query([[vencimento_num]])
-        row = df_ipca_sorted.iloc[idx[0]]
-        return row["Data Vencimento"], row["Taxa Compra Manha"]
-
-    # 4. Aplica o cruzamento
-    resultados = []
-    for idx, row in df_pre.iterrows():
-        venc_match, taxa_ipca = _match_ipca(row["Vencimento_Num"])
-        
-        # Fórmula de Fisher
-        inflacao = ((1 + row["Taxa Compra Manha"] / 100) / (1 + taxa_ipca / 100) - 1) * 100
-        
-        resultados.append({
-            "Data Base": row["Data Base"],
-            "Vencimento Prefixado": row["Data Vencimento"],
-            "Taxa Prefixada": row["Taxa Compra Manha"],
-            "Vencimento IPCA+ Ref": venc_match,
-            "Taxa IPCA+": taxa_ipca,
-            "Inflação Implícita (%)": inflacao
-        })
-
-    return pd.DataFrame(resultados), None
+except Exception as e:
+    st.error(f"Ocorreu um erro inesperado na aplicação: {e}")
+    st.markdown("Tente recarregar a página.")

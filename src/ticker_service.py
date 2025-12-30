@@ -29,7 +29,7 @@ from src import b3_engine
 # --- CORREÇÃO DA URL (Convertida para formato RAW) ---
 # O link original era: https://github.com/tovarich86/ticker/blob/main/assets/empresas_b3.xlsx
 # Para funcionar no Pandas, usamos o link 'raw':
-URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/main/assets/empresas_b3 (6).xlsx"
+URL_EMPRESAS = "https://github.com/tovarich86/ticker/raw/refs/heads/main/assets/empresas_b3%20(6).xlsx"
 
 @st.cache_data(ttl=3600)
 def carregar_empresas(arquivo_upload=None):

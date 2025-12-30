@@ -76,7 +76,7 @@ if st.button("Calcular Correção", type="primary"):
             with col_res2:
                 st.metric("Valor Corrigido (IPCA)", f"R$ {valor_corr:,.2f}")
                 if taxa_aa > 0:
-                    st.metric(f"Total (+ {taxa_aa*100}% a.a.)", f"R$ {valor_final_total:,.2f}", delta=f"{pct_total*100:.2f}%")
+                    st.metric(f"Total (+ {taxa_aa*100}% a.a.)", f"R$ {valor_final_total:,.2f}", f"{pct_total*100:.2f}%")
 
             # Tabela Memória de Cálculo
             with st.expander("Ver Memória de Cálculo Mensal"):

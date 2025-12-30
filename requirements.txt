@@ -1,8 +1,11 @@
 streamlit
-yfinance==0.2.66
 pandas
-openpyxl
-arch
-xlsxwriter
+numpy
+scipy
+requests
+yfinance
+polars
 curl_cffi
-polars>=1.0.0
+xlsxwriter
+lxml
+openpyxl

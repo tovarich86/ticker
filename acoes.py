@@ -4,7 +4,6 @@ import streamlit as st
 # Configuração da Página Principal
 st.set_page_config(
     page_title="Portal Financeiro B3/Tesouro",
-    page_icon="🇧🇷",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
@@ -15,8 +14,8 @@ st.set_page_config(
 )
 
 # Cabeçalho
-st.title("🇧🇷 Portal de Dados Financeiros")
-st.markdown("#### Uma suíte completa de ferramentas para análise de dados do mercado brasileiro.")
+st.title("Portal de Dados Financeiros")
+st.markdown("#### ferramentas para análise de dados do mercado brasileiro.")
 st.divider()
 
 # Layout em Colunas para apresentar as ferramentas
@@ -27,10 +26,10 @@ with col1:
     st.markdown("""
     **Busca Híbrida de Ativos (B3 + Yahoo)**
     
-    Ferramenta poderosa para análise de renda variável.
-    * **Cotações:** OHLCV oficial da B3 (COTAHIST) mesclado com 'Adj Close' do Yahoo.
+    Dados de tickers nacionais e internacionais.
+    * **Cotações:** Oficial da B3 (COTAHIST).
     * **Proventos:** Dividendos e Bonificações direto da API da B3.
-    * **Tickers:** Suporte a ações brasileiras e internacionais.
+    * **Tickers:** Suporte a ações brasileiras e internacionais (Yahoo finance).
     
     👉 *Acesse no menu lateral: **Busca de Ativos***
     """)
@@ -39,7 +38,7 @@ with col1:
     st.markdown("""
     **Curva de Juros DI**
     
-    Visualize a expectativa do mercado para a taxa Selic no futuro.
+    Expectativa do mercado para a taxa Selic no futuro.
     * **Fonte Oficial:** Dados de Preços Referenciais da B3.
     * **Histórico:** Permite baixar a curva de qualquer data passada.
     * **Bulk Download:** Processe múltiplas datas via arquivo Excel.
@@ -52,14 +51,14 @@ with col2:
     st.markdown("""
     **Inflação Implícita (Tesouro Direto)**
     
-    Descubra qual a inflação que o mercado está precificando hoje.
+   Inflação que o mercado está precificando a  partir da taxa pré e pós fixada.
     * **Metodologia:** Diferença entre Taxa Prefixada e Taxa IPCA+ (Fisher).
     * **Interpolação:** Cruzamento inteligente de vértices de vencimento.
     
     👉 *Acesse no menu lateral: **Inflação Implícita***
     """)
 
-    st.header("🧮 Calculadora Cidadã")
+    st.header("🧮 Calculadora IPCA")
     st.markdown("""
     **Correção Monetária (IPCA)**
     

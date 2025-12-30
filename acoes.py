@@ -46,7 +46,7 @@ with col1:
     """)
 
 with col2:
-    st.header("💸 Renda Fixa & Inflação")
+    st.header("💸 Inflação Futura")
     st.markdown("""
     **Inflação Implícita (Tesouro Direto)**
     

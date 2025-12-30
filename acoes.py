@@ -67,7 +67,7 @@ with col2:
     * **Flexibilidade:** Permite adicionar juros prefixados ao cálculo.
     * **Memória:** Tabela detalhada mês a mês.
     
-    👉 *Acesse no menu lateral: **Calculadora Cidadã***
+    👉 *Acesse no menu lateral: **Calculadora IPCA***
     """)
 
 st.divider()

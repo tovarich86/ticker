@@ -186,14 +186,6 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     return df
 
-Para tornar a busca de bonificações robusta como no seu código original e resolver definitivamente o erro de duplicidade da coluna "Ticker", você deve atualizar o arquivo de serviço e ajustar a interface.
-
-Aqui estão as correções detalhadas:
-
-1. Atualização do src/ticker_service.py
-Esta versão de buscar_bonificacoes_b3 reintegra o tratamento de erros detalhado, a filtragem rigorosa e a organização de colunas do seu código original, garantindo que o DataFrame já saia da função com o campo 'Ticker'.
-
-Python
 
 def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """Busca eventos de bonificação (stock dividends) na B3 de forma robusta."""

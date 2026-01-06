@@ -81,38 +81,110 @@ def get_ticker_info(ticker, df_empresas):
     return None
 
 def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
-    """Busca Dividendos via API B3."""
-    if empresas_df.empty: return pd.DataFrame()
+    """
+    Busca dividendos na B3 para um ticker específico, tratando paginação
+    e filtrando pelo typeStock correto (ON, PN, UNT).
+    Retorna um DataFrame com os dividendos filtrados ou DataFrame vazio.
+    """
+    if not any(char.isdigit() for char in ticker):
+        return pd.DataFrame()
 
     ticker_info = get_ticker_info(ticker, empresas_df)
-    if not ticker_info: return pd.DataFrame()
-    
+
+    if not ticker_info:
+        st.warning(f"Informações não encontradas para o ticker {ticker} na planilha de empresas.")
+        return pd.DataFrame()
+
     trading_name = ticker_info['trading_name']
     desired_type_stock = ticker_info['type_stock']
-    
-    session = curl_requests.Session(impersonate="chrome")
-    try:
-        params = {"language": "pt-br", "pageNumber": "1", "pageSize": "50", "tradingName": trading_name}
-        params_encoded = b64encode(json.dumps(params).encode('utf-8')).decode('utf-8')
-        url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
-        
-        response = session.get(url, timeout=20)
-        res_json = response.json()
-        
-        if 'results' in res_json:
-            df = pd.DataFrame(res_json['results'])
-            if df.empty: return pd.DataFrame()
-            
-            if 'typeStock' in df.columns:
-                df['typeStock'] = df['typeStock'].str.strip().str.upper()
-                df = df[df['typeStock'] == desired_type_stock].copy()
-            
-            df['lastDatePriorEx_dt'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
-            df = df[(df['lastDatePriorEx_dt'] >= data_inicio) & (df['lastDatePriorEx_dt'] <= data_fim)]
-            return df.drop(columns=['lastDatePriorEx_dt'])
-    except Exception: 
+
+    if not trading_name:
+        st.warning(f"Nome de pregão não encontrado para o ticker {ticker}.")
         return pd.DataFrame()
-    return pd.DataFrame()
+    if not desired_type_stock:
+        st.warning(f"Tipo de ação (typeStock) não encontrado para o ticker {ticker} na planilha.")
+        return pd.DataFrame()
+
+    all_dividends = []
+    current_page = 1
+    total_pages = 1
+
+    st.write(f"Buscando dividendos para {ticker} ({trading_name}, Tipo: {desired_type_stock})...")
+
+    # Usa curl_cffi para simular um navegador na chamada à B3
+    session = curl_requests.Session(impersonate="chrome")
+    
+    while current_page <= total_pages:
+        try:
+            params = {
+                "language": "pt-br",
+                "pageNumber": str(current_page),
+                "pageSize": "50",
+                "tradingName": trading_name,
+            }
+            params_json = json.dumps(params)
+            params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
+            url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedCashDividends/{params_encoded}'
+
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            response_json = response.json()
+
+            if current_page == 1 and 'page' in response_json and 'totalPages' in response_json['page']:
+                total_pages = int(response_json['page']['totalPages'])
+                st.write(f"Total de {total_pages} páginas de dividendos encontradas para {trading_name}.")
+
+            if 'results' in response_json and response_json['results']:
+                all_dividends.extend(response_json['results'])
+            elif current_page == 1:
+                break
+
+            if total_pages > 1:
+                time.sleep(0.2)
+
+            current_page += 1
+
+        except curl_requests.errors.RequestsError as e:
+            st.error(f"Erro de rede ao buscar dividendos para {ticker} (página {current_page}): {e}")
+            break
+        except json.JSONDecodeError:
+            st.error(f"Erro ao decodificar JSON da resposta da B3 para {ticker} (página {current_page}).")
+            break
+        except Exception as e:
+            st.error(f"Erro inesperado ao buscar dividendos para {ticker} (página {current_page}): {e}")
+            break
+
+    if not all_dividends:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(all_dividends)
+    if 'typeStock' in df.columns:
+        df['typeStock'] = df['typeStock'].str.strip().str.upper()
+        df_filtered_type = df[df['typeStock'] == desired_type_stock].copy()
+        if df_filtered_type.empty:
+            return pd.DataFrame()
+        df = df_filtered_type
+    else:
+        st.warning(f"Coluna 'typeStock' não encontrada nos resultados da B3 para {ticker}. Não foi possível filtrar por tipo de ação.")
+
+    df['Ticker'] = ticker
+
+    if 'lastDatePriorEx' in df.columns:
+        df['lastDatePriorEx_dt'] = pd.to_datetime(df['lastDatePriorEx'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['lastDatePriorEx_dt'])
+        df = df[(df['lastDatePriorEx_dt'] >= data_inicio) & (df['lastDatePriorEx_dt'] <= data_fim)]
+        df = df.drop(columns=['lastDatePriorEx_dt'])
+    else:
+        st.warning(f"Coluna 'lastDatePriorEx' não encontrada para filtrar datas de dividendos de {ticker}.")
+        return pd.DataFrame()
+
+    if 'Ticker' in df.columns:
+        cols_to_keep = ['Ticker', 'paymentDate', 'typeStock', 'lastDatePriorEx', 'value', 'relatedToAction', 'label', 'ratio']
+        existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
+        other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
+        df = df[existing_cols_to_keep + other_cols]
+
+    return df
 
 def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
     """Busca Bonificações via API B3."""

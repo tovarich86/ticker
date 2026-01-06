@@ -186,32 +186,82 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
 
     return df
 
+Para tornar a busca de bonificações robusta como no seu código original e resolver definitivamente o erro de duplicidade da coluna "Ticker", você deve atualizar o arquivo de serviço e ajustar a interface.
+
+Aqui estão as correções detalhadas:
+
+1. Atualização do src/ticker_service.py
+Esta versão de buscar_bonificacoes_b3 reintegra o tratamento de erros detalhado, a filtragem rigorosa e a organização de colunas do seu código original, garantindo que o DataFrame já saia da função com o campo 'Ticker'.
+
+Python
+
 def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
-    """Busca Bonificações via API B3."""
-    if empresas_df.empty: return pd.DataFrame()
+    """Busca eventos de bonificação (stock dividends) na B3 de forma robusta."""
+    if not any(char.isdigit() for char in ticker):
+        return pd.DataFrame()
 
     ticker_info = get_ticker_info(ticker, empresas_df)
-    if not ticker_info or not ticker_info.get('code'): return pd.DataFrame()
-    
+    if not ticker_info or not ticker_info.get('code'):
+        st.warning(f"Código (CODE) não encontrado para o ticker {ticker} na planilha. Não é possível buscar bonificações.")
+        return pd.DataFrame()
+
+    code = ticker_info['code']
     session = curl_requests.Session(impersonate="chrome")
+
     try:
-        params = {"issuingCompany": ticker_info['code'], "language": "pt-br"}
-        params_encoded = b64encode(json.dumps(params).encode('utf-8')).decode('utf-8')
+        params_bonificacoes = {
+            "issuingCompany": code,
+            "language": "pt-br"
+        }
+        params_json = json.dumps(params_bonificacoes)
+        params_encoded = b64encode(params_json.encode('utf-8')).decode('utf-8')
         url = f'https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetListedSupplementCompany/{params_encoded}'
         
-        response = session.get(url, timeout=20)
-        data = response.json()
+        response = session.get(url, timeout=30)
+        response.raise_for_status()
+
+        if not response.content or not response.text.strip():
+            return pd.DataFrame()
         
-        if data and "stockDividends" in data[0]:
-            df = pd.DataFrame(data[0]["stockDividends"])
-            if df.empty: return pd.DataFrame()
-            
+        try:
+            data = response.json()
+        except json.JSONDecodeError:
+            return pd.DataFrame()
+
+        if not isinstance(data, list) or not data or "stockDividends" not in data[0] or not data[0]["stockDividends"]:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data[0]["stockDividends"])
+        if df.empty:
+            return pd.DataFrame()
+
+        # Adiciona o Ticker internamente
+        df['Ticker'] = ticker
+        
+        if 'lastDatePrior' in df.columns:
             df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
-            df = df[(df['lastDatePrior_dt'] >= data_inicio) & (df['lastDatePrior_dt'] <= data_fim)]
-            return df.drop(columns=['lastDatePrior_dt'])
-    except Exception: 
+            df = df.dropna(subset=['lastDatePrior_dt'])
+            # Filtro de data
+            df = df[(df['lastDatePrior_dt'] >= pd.to_datetime(data_inicio)) & (df['lastDatePrior_dt'] <= pd.to_datetime(data_fim))]
+            df = df.drop(columns=['lastDatePrior_dt'])
+        else:
+            st.warning(f"Coluna 'lastDatePrior' não encontrada para filtrar datas de bonificações de {ticker}.")
+            return pd.DataFrame()
+
+        # Reordenação de colunas para padrão profissional
+        cols_to_keep = ['Ticker', 'label', 'lastDatePrior', 'factor', 'approvedIn', 'isinCode']
+        existing_cols_to_keep = [col for col in cols_to_keep if col in df.columns]
+        other_cols = [col for col in df.columns if col not in existing_cols_to_keep]
+        df = df[existing_cols_to_keep + other_cols]
+
+        return df
+
+    except curl_requests.errors.RequestsError as e:
+        st.error(f"Erro de rede ao buscar bonificações para {ticker} (Código: {code}): {e}")
         return pd.DataFrame()
-    return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro inesperado ao buscar bonificações para {ticker} (Código: {code}): {e}")
+        return pd.DataFrame()
 
 def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
     """

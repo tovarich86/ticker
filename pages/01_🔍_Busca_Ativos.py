@@ -90,15 +90,15 @@ if btn_buscar:
         
         for t in tickers_list:
             if "Dividendos" in tipos_dados:
+                # O serviço já retorna o DataFrame com a coluna 'Ticker'
                 d = ticker_service.buscar_dividendos_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
                 if not d.empty: 
-                    d.insert(0, 'Ticker', t)
                     dfs_div.append(d)
             
             if "Bonificações" in tipos_dados:
+                # O serviço agora também retorna com a coluna 'Ticker'
                 b = ticker_service.buscar_bonificacoes_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
                 if not b.empty: 
-                    b.insert(0, 'Ticker', t)
                     dfs_bon.append(b)
 
         with tabs[1]:

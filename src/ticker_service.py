@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from curl_cffi import requests as curl_requests
 import streamlit as st 
+import time
 
 # Importa o motor de baixo nível
 from src import b3_engine

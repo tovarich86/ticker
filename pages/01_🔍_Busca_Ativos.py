@@ -13,10 +13,8 @@ st.set_page_config(page_title="Busca de Ativos", layout="wide")
 st.title("🔍 Busca Híbrida de Ativos (B3 + Yahoo)")
 
 # --- 1. CARREGAMENTO DE EMPRESAS (COM FALLBACK) ---
-# Tenta carregar automaticamente do GitHub
 df_empresas = ticker_service.carregar_empresas()
 
-# Se falhar (DataFrame vazio), pede upload manual
 if df_empresas.empty:
     st.warning("⚠️ Não foi possível baixar a lista de empresas do GitHub. Por favor, carregue o arquivo 'empresas_b3.xlsx' manualmente.")
     arquivo_manual = st.file_uploader("Upload da Planilha de Empresas (Excel)", type=["xlsx"])
@@ -30,7 +28,7 @@ if df_empresas.empty:
             st.stop()
     else:
         st.info("Aguardando upload para prosseguir...")
-        st.stop() # Para a execução aqui até o usuário enviar o arquivo
+        st.stop()
 
 # --- 2. INPUTS DE BUSCA ---
 col1, col2 = st.columns(2)
@@ -67,13 +65,12 @@ if btn_buscar:
                 dt_fim.strftime("%d/%m/%Y"), 
                 df_empresas
             )
-            # Exibição na Tab de Cotações
             with tabs[0]:
                 if erros:
                     for e in erros: st.error(e)
                 if res_cotacoes:
-                    df_all = pd.concat(res_cotacoes.values(), ignore_index=True)
-                    st.dataframe(df_all, use_container_width=True)
+                    df_all_cot = pd.concat(res_cotacoes.values(), ignore_index=True)
+                    st.dataframe(df_all_cot, use_container_width=True)
                 else:
                     st.info("Nenhuma cotação encontrada.")
 
@@ -90,26 +87,27 @@ if btn_buscar:
                 b = ticker_service.buscar_bonificacoes_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
                 if not b.empty: dfs_bon.append(b)
 
+        # Exibição nas Tabs
+        with tabs[1]:
+            if dfs_div:
+                st.dataframe(pd.concat(dfs_div), use_container_width=True)
+            else: st.caption("Sem dividendos no período.")
+
+        with tabs[2]:
+            if dfs_bon:
+                st.dataframe(pd.concat(dfs_bon), use_container_width=True)
+            else: st.caption("Sem bonificações no período.")
+
         # 3. Lógica de Exportação Unificada
         if res_cotacoes or dfs_div or dfs_bon:
             out = BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
-                # Aba de Cotações
                 if res_cotacoes:
-                    df_all = pd.concat(res_cotacoes.values(), ignore_index=True)
-                    df_all.to_excel(writer, index=False, sheet_name='Cotações')
-                
-                # Aba de Dividendos
+                    pd.concat(res_cotacoes.values(), ignore_index=True).to_excel(writer, index=False, sheet_name='Cotações')
                 if dfs_div:
-                    final_div = pd.concat(dfs_div)
-                    final_div.to_excel(writer, index=False, sheet_name='Dividendos')
-                    with tabs[1]: st.dataframe(final_div, use_container_width=True)
-                
-                # Aba de Bonificações
+                    pd.concat(dfs_div).to_excel(writer, index=False, sheet_name='Dividendos')
                 if dfs_bon:
-                    final_bon = pd.concat(dfs_bon)
-                    final_bon.to_excel(writer, index=False, sheet_name='Bonificacoes')
-                    with tabs[2]: st.dataframe(final_bon, use_container_width=True)
+                    pd.concat(dfs_bon).to_excel(writer, index=False, sheet_name='Bonificacoes')
 
             st.markdown("---")
             st.download_button(
@@ -118,35 +116,3 @@ if btn_buscar:
                 file_name=f"busca_ativos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-                else:
-                    st.info("Nenhuma cotação encontrada.")
-
-        # PROVENTOS
-        tickers_list = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
-        dfs_div = []
-        dfs_bon = []
-        
-        for t in tickers_list:
-            if "Dividendos" in tipos_dados:
-                # O serviço já retorna o DataFrame com a coluna 'Ticker'
-                d = ticker_service.buscar_dividendos_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
-                if not d.empty: 
-                    dfs_div.append(d)
-            
-            if "Bonificações" in tipos_dados:
-                # O serviço agora também retorna com a coluna 'Ticker'
-                b = ticker_service.buscar_bonificacoes_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
-                if not b.empty: 
-                    dfs_bon.append(b)
-
-        with tabs[1]:
-            if dfs_div:
-                final_div = pd.concat(dfs_div)
-                st.dataframe(final_div, use_container_width=True)
-            else: st.caption("Sem dividendos no período.")
-
-        with tabs[2]:
-            if dfs_bon:
-                final_bon = pd.concat(dfs_bon)
-                st.dataframe(final_bon, use_container_width=True)
-            else: st.caption("Sem bonificações no período.")

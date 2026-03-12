@@ -78,6 +78,8 @@ def baixar_e_parsear_dia(data_pregao, tickers_b3, session):
             pl.col('PRECO_MAXIMO').cast(pl.Float64).truediv(100).alias('High'),
             pl.col('PRECO_MINIMO').cast(pl.Float64).truediv(100).alias('Low'),
             pl.col('PRECO_ULTIMO_NEGOCIO').cast(pl.Float64).truediv(100).alias('Close'),
+            # Adicionando o Preço Médio:
+            pl.col('PRECO_MEDIO').cast(pl.Float64).truediv(100).alias('Average'), 
             pl.col('VOLUME_TOTAL_NEGOCIADO').cast(pl.Float64).alias('Volume')
-        ]).select(['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume']).to_pandas()
+        ]).select(['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Volume']).to_pandas()
     except: return None

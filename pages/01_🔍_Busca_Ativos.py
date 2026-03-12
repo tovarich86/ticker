@@ -58,28 +58,66 @@ if btn_buscar:
     tabs = st.tabs(["📊 Cotações", "💰 Dividendos", "🎁 Bonificações"])
     
     with st.spinner("Processando dados..."):
-        # COTAÇÕES
+        # 1. Busca de Cotações
+        res_cotacoes = {}
         if "Preços" in tipos_dados:
-            # Chama a função blindada do service
             res_cotacoes, erros = ticker_service.buscar_dados_hibrido(
                 tickers_input, 
                 dt_ini.strftime("%d/%m/%Y"), 
                 dt_fim.strftime("%d/%m/%Y"), 
                 df_empresas
             )
-            
+            # Exibição na Tab de Cotações
             with tabs[0]:
                 if erros:
                     for e in erros: st.error(e)
-                
                 if res_cotacoes:
                     df_all = pd.concat(res_cotacoes.values(), ignore_index=True)
                     st.dataframe(df_all, use_container_width=True)
-                    
-                    out = BytesIO()
-                    with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
-                        df_all.to_excel(writer, index=False)
-                    st.download_button("Baixar Cotações (XLSX)", out.getvalue(), "cotacoes.xlsx")
+                else:
+                    st.info("Nenhuma cotação encontrada.")
+
+        # 2. Busca de Proventos e Eventos
+        tickers_list = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
+        dfs_div = []
+        dfs_bon = []
+        
+        for t in tickers_list:
+            if "Dividendos" in tipos_dados:
+                d = ticker_service.buscar_dividendos_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
+                if not d.empty: dfs_div.append(d)
+            if "Bonificações" in tipos_dados:
+                b = ticker_service.buscar_bonificacoes_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
+                if not b.empty: dfs_bon.append(b)
+
+        # 3. Lógica de Exportação Unificada
+        if res_cotacoes or dfs_div or dfs_bon:
+            out = BytesIO()
+            with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+                # Aba de Cotações
+                if res_cotacoes:
+                    df_all = pd.concat(res_cotacoes.values(), ignore_index=True)
+                    df_all.to_excel(writer, index=False, sheet_name='Cotações')
+                
+                # Aba de Dividendos
+                if dfs_div:
+                    final_div = pd.concat(dfs_div)
+                    final_div.to_excel(writer, index=False, sheet_name='Dividendos')
+                    with tabs[1]: st.dataframe(final_div, use_container_width=True)
+                
+                # Aba de Bonificações
+                if dfs_bon:
+                    final_bon = pd.concat(dfs_bon)
+                    final_bon.to_excel(writer, index=False, sheet_name='Bonificacoes')
+                    with tabs[2]: st.dataframe(final_bon, use_container_width=True)
+
+            st.markdown("---")
+            st.download_button(
+                label="📥 Baixar Dados Completos (XLSX)",
+                data=out.getvalue(),
+                file_name=f"busca_ativos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
                 else:
                     st.info("Nenhuma cotação encontrada.")
 

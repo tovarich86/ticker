@@ -332,7 +332,7 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
                     df_t = df_t.reset_index()
                     df_t['Date'] = df_t['Date'].dt.strftime('%d/%m/%Y')
                     
-                    cols = ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+                    cols = ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Adj Close', 'Volume']
                     cols_existentes = [c for c in cols if c in df_t.columns]
                     resultados[t] = df_t[cols_existentes]
         else:

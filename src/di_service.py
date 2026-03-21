@@ -1,4 +1,4 @@
-import requests
+from curl_cffi import requests as curl_requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
@@ -48,7 +48,8 @@ def consultar_taxas_di_advfn(ticker):
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        session = curl_requests.Session(impersonate="chrome")
+        response = session.get(url, timeout=15)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')

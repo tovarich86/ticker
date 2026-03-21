@@ -1,5 +1,7 @@
 import sys
 import os
+import base64
+import json
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import date, datetime, timedelta
@@ -21,7 +23,7 @@ MESES_DI_INV = {v: k for k, v in CODIGOS_MES_DI.items()}
 def gerar_opcoes_tickers(data_ref, meses_curtos=12, anos_longos=10):
     """
     Gera dinamicamente as opções de tickers de vencimentos mais próximos e longos.
-    Isso alimentará o multiselect na interface do usuário.
+    Isso alimentará o multiselect na interface do utilizador.
     """
     tickers = []
     
@@ -84,11 +86,10 @@ def calcular_dias_uteis_di(ticker, data_ref):
 
 def consultar_taxas_di_advfn(ticker):
     """
-    Faz o web scraping do histórico de um ticker específico no ADVFN.
-    Utiliza curl_cffi para emular um navegador e evitar bloqueios.
+    Extrai o histórico lendo o JSON embutido e codificado em Base64 
+    direto do HTML do ADVFN.
     """
     url = f"https://br.advfn.com/bolsa-de-valores/bmf/{ticker}/historico"
-    
     session = curl_requests.Session(impersonate="chrome")
 
     try:
@@ -96,56 +97,53 @@ def consultar_taxas_di_advfn(ticker):
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
-        rows = soup.find_all('div', {'role': 'row'})
         
-        data_list = []
-        for row in rows:
-            cells = row.find_all('div', {'role': 'gridcell'})
-            if not cells: continue
-                
-            row_data = {}
-            for cell in cells:
-                col_id = cell.get('col-id')
-                val_span = cell.find('span', {'class': 'ag-cell-value'})
-                if col_id and val_span:
-                    row_data[col_id] = val_span.get_text(strip=True)
+        # Encontra a div que contém o payload com os dados da tabela
+        table_div = soup.find('div', id='table_more_historical')
+        if not table_div:
+            return None, "Div de histórico não encontrada no HTML."
             
-            if row_data:
-                data_list.append(row_data)
+        data_options_b64 = table_div.get('data-options')
+        if not data_options_b64:
+            return None, "Atributo data-options ausente no HTML."
+            
+        # Decodifica Base64 para String JSON e transforma em dicionário
+        json_str = base64.b64decode(data_options_b64).decode('utf-8')
+        data_json = json.loads(json_str)
         
-        if not data_list: 
-            return None, "Sem dados na tabela"
-
-        df = pd.DataFrame(data_list)
-        df = df[['Date', 'ClosePrice']].rename(columns={'Date': 'DATA', 'ClosePrice': 'TAXA'})
+        records = data_json.get('data', [])
+        if not records:
+            return None, "A lista de dados retornou vazia."
+            
+        df = pd.DataFrame(records)
         
-        # Converte a taxa de string (14,42) para float (14.42)
-        df['TAXA'] = df['TAXA'].str.replace('.', '', regex=False).str.replace(',', '.', regex=False).astype(float)
+        # O Timestamp vem em segundos ("Date": "1774044000"). Convertendo para data local:
+        df['DATA_DT'] = pd.to_datetime(df['Date'].astype(int), unit='s')
+        df['DATA_DT'] = df['DATA_DT'].dt.tz_localize('UTC').dt.tz_convert('America/Sao_Paulo').dt.date
         
-        return df, None
+        # Extrai apenas a taxa de fechamento como float real
+        df['TAXA'] = df['ClosePrice'].astype(float)
+        
+        return df[['DATA_DT', 'TAXA']], None
 
     except Exception as e:
-        return None, str(e)
+        return None, f"Falha na extração: {str(e)}"
 
 def _processar_ticker_unico(ticker, data_ref):
     """
-    Função worker para consultar o ADVFN, filtrar pela data desejada
-    e calcular os dias úteis.
+    Worker paralelo que procura o JSON, filtra a data e calcula dias úteis.
     """
     df_hist, err = consultar_taxas_di_advfn(ticker)
     
     if df_hist is not None and not df_hist.empty:
-        # Tenta converter a string de data (ex: '20 Mar 2026') para datetime
-        df_hist['DATA_DT'] = pd.to_datetime(df_hist['DATA'], errors='coerce')
-        
-        # Garante que data_ref é date para a comparação
+        # Garante que data_ref é um objeto do tipo date para a comparação
         if isinstance(data_ref, datetime):
             data_ref_date = data_ref.date()
         else:
             data_ref_date = data_ref
             
-        # Filtra pela data exata solicitada
-        df_dia = df_hist[df_hist['DATA_DT'].dt.date == data_ref_date]
+        # Filtra a linha da data específica
+        df_dia = df_hist[df_hist['DATA_DT'] == data_ref_date]
         
         if not df_dia.empty:
             taxa_fechamento = df_dia.iloc[0]['TAXA']
@@ -162,8 +160,8 @@ def _processar_ticker_unico(ticker, data_ref):
 
 def consultar_taxas_di_por_tickers(data_ref, tickers_selecionados):
     """
-    Nova função principal: Busca apenas os tickers que o usuário selecionou.
-    Executa a raspagem de forma paralela para acelerar o retorno.
+    Função principal: Procura apenas os tickers que o utilizador selecionou.
+    Executa a extração de forma paralela para acelerar o retorno.
     """
     if not tickers_selecionados:
         return None, "Nenhum ticker selecionado."
@@ -171,7 +169,7 @@ def consultar_taxas_di_por_tickers(data_ref, tickers_selecionados):
     resultados = []
     erros_execucao = []
     
-    # Limita o número de conexões simultâneas para não estressar o servidor
+    # Limita o número de ligações simultâneas para não sobrecarregar
     max_workers = min(len(tickers_selecionados), 8)
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

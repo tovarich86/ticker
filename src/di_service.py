@@ -18,13 +18,17 @@ CODIGOS_MES_DI = {
 
 MESES_DI_INV = {v: k for k, v in CODIGOS_MES_DI.items()}
 
-def gerar_tickers_di(data_ref, meses_curtos=8, anos_longos=6):
+def gerar_opcoes_tickers(data_ref, meses_curtos=12, anos_longos=10):
     """
-    Gera dinamicamente os tickers dos vencimentos mais próximos.
-    - meses_curtos: Quantos vencimentos mensais sequenciais buscar.
-    - anos_longos: Quantos vencimentos anuais (sempre Janeiro - F) buscar para o longo prazo.
+    Gera dinamicamente as opções de tickers de vencimentos mais próximos e longos.
+    Isso alimentará o multiselect na interface do usuário.
     """
     tickers = []
+    
+    # Se vier datetime, converte para date
+    if isinstance(data_ref, datetime):
+        data_ref = data_ref.date()
+        
     mes_atual = data_ref.month
     ano_atual = data_ref.year
     
@@ -50,8 +54,11 @@ def gerar_tickers_di(data_ref, meses_curtos=8, anos_longos=6):
 def calcular_dias_uteis_di(ticker, data_ref):
     """
     Calcula os dias úteis entre a data de referência e o vencimento do DI,
-    utilizando as regras de feriados do seu b3_engine.
+    utilizando as regras de feriados do b3_engine.
     """
+    if isinstance(data_ref, datetime):
+        data_ref = data_ref.date()
+        
     letra_mes = ticker[3]
     ano_venc = int("20" + ticker[4:6])
     mes_venc = MESES_DI_INV[letra_mes]
@@ -78,11 +85,10 @@ def calcular_dias_uteis_di(ticker, data_ref):
 def consultar_taxas_di_advfn(ticker):
     """
     Faz o web scraping do histórico de um ticker específico no ADVFN.
-    Utiliza curl_cffi (impersonate="chrome") para evitar bloqueios.
+    Utiliza curl_cffi para emular um navegador e evitar bloqueios.
     """
     url = f"https://br.advfn.com/bolsa-de-valores/bmf/{ticker}/historico"
     
-    # Usando a mesma técnica anti-bloqueio já utilizada no seu ticker_service.py
     session = curl_requests.Session(impersonate="chrome")
 
     try:
@@ -107,7 +113,8 @@ def consultar_taxas_di_advfn(ticker):
             if row_data:
                 data_list.append(row_data)
         
-        if not data_list: return None, "Sem dados na tabela"
+        if not data_list: 
+            return None, "Sem dados na tabela"
 
         df = pd.DataFrame(data_list)
         df = df[['Date', 'ClosePrice']].rename(columns={'Date': 'DATA', 'ClosePrice': 'TAXA'})
@@ -122,8 +129,8 @@ def consultar_taxas_di_advfn(ticker):
 
 def _processar_ticker_unico(ticker, data_ref):
     """
-    Função auxiliar para consultar o ADVFN, filtrar pela data desejada
-    e calcular os dias úteis. Projetada para execução paralela.
+    Função worker para consultar o ADVFN, filtrar pela data desejada
+    e calcular os dias úteis.
     """
     df_hist, err = consultar_taxas_di_advfn(ticker)
     
@@ -131,14 +138,19 @@ def _processar_ticker_unico(ticker, data_ref):
         # Tenta converter a string de data (ex: '20 Mar 2026') para datetime
         df_hist['DATA_DT'] = pd.to_datetime(df_hist['DATA'], errors='coerce')
         
-        # Filtra pela data exata solicitada pelo usuário
-        df_dia = df_hist[df_hist['DATA_DT'].dt.date == data_ref]
+        # Garante que data_ref é date para a comparação
+        if isinstance(data_ref, datetime):
+            data_ref_date = data_ref.date()
+        else:
+            data_ref_date = data_ref
+            
+        # Filtra pela data exata solicitada
+        df_dia = df_hist[df_hist['DATA_DT'].dt.date == data_ref_date]
         
         if not df_dia.empty:
             taxa_fechamento = df_dia.iloc[0]['TAXA']
-            dias_uteis = calcular_dias_uteis_di(ticker, data_ref)
+            dias_uteis = calcular_dias_uteis_di(ticker, data_ref_date)
             
-            # Só retorna se for um vencimento válido (dias úteis > 0)
             if dias_uteis > 0:
                 return {
                     'VENCIMENTO': ticker,
@@ -148,18 +160,22 @@ def _processar_ticker_unico(ticker, data_ref):
             
     return None
 
-def consultar_taxas_di(data_ref):
+def consultar_taxas_di_por_tickers(data_ref, tickers_selecionados):
     """
-    Função principal chamada pela interface do Streamlit.
-    Retorna o DataFrame final montado com a curva DI.
+    Nova função principal: Busca apenas os tickers que o usuário selecionou.
+    Executa a raspagem de forma paralela para acelerar o retorno.
     """
-    tickers = gerar_tickers_di(data_ref, meses_curtos=8, anos_longos=6)
+    if not tickers_selecionados:
+        return None, "Nenhum ticker selecionado."
+
     resultados = []
     erros_execucao = []
     
-    # Dispara a busca simultânea para acelerar o processo
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_processar_ticker_unico, t, data_ref): t for t in tickers}
+    # Limita o número de conexões simultâneas para não estressar o servidor
+    max_workers = min(len(tickers_selecionados), 8)
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_processar_ticker_unico, t, data_ref): t for t in tickers_selecionados}
         
         for future in futures:
             try:
@@ -170,7 +186,7 @@ def consultar_taxas_di(data_ref):
                 erros_execucao.append(f"Erro no {futures[future]}: {str(e)}")
                 
     if not resultados:
-        return None, "Nenhum dado encontrado. A data solicitada pode ser feriado/final de semana ou muito distante no passado."
+        return None, "Nenhum dado encontrado para os tickers na data solicitada (verifique se é feriado/fim de semana)."
         
     df_final = pd.DataFrame(resultados)
     

@@ -76,7 +76,7 @@ if st.button("Buscar Taxas", type="primary"):
             df, err = di_service.consultar_taxas_di_por_tickers(data_ref, tickers_selecionados)
             
             if df is not None and not df.empty:
-                # Adiciona a data de referência à tabela para sabermos de quando são aqueles dados
+                # Adiciona a data de referência à tabela
                 df.insert(0, "DATA_REF", data_ref.strftime("%d/%m/%Y"))
                 results.append(df)
             else:
@@ -87,12 +87,26 @@ if st.button("Buscar Taxas", type="primary"):
             
     if results:
         df_final = pd.concat(results, ignore_index=True)
+        
+        # --- LÓGICA DE AUDITORIA: Gera o link direto para a fonte ---
+        df_final['FONTE_AUDITORIA'] = "https://br.advfn.com/bolsa-de-valores/bmf/" + df_final['VENCIMENTO'] + "/historico"
+        
         st.success("Busca Finalizada com sucesso!")
         
-        # Exibe exclusivamente a tabela com os valores de fechamento
-        st.dataframe(df_final, use_container_width=True)
+        # Exibe a tabela formatando a coluna de auditoria como um link clicável
+        st.dataframe(
+            df_final, 
+            use_container_width=True,
+            column_config={
+                "FONTE_AUDITORIA": st.column_config.LinkColumn(
+                    "Link para Validação",
+                    help="Clique para conferir o histórico original deste vencimento no ADVFN.",
+                    display_text="Ver Fonte" # Substitui a URL feia por um texto limpo na tela
+                )
+            }
+        )
         
-        # Geração do arquivo para download
+        # Geração do arquivo para download (no Excel o link vai completo)
         out = BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
             df_final.to_excel(writer, index=False)

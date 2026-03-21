@@ -31,12 +31,12 @@ if col_mode == "Data Única":
         tickers_selecionados = st.multiselect(
             "Selecione os Vencimentos (Tickers)",
             options=opcoes_disponiveis,
-            default=opcoes_disponiveis[:6] # Deixa os primeiros 6 pré-selecionados para comodidade
+            default=opcoes_disponiveis[:6] # Deixa os primeiros 6 pré-selecionados
         )
         
 else:
-    st.markdown("Envie um ficheiro Excel ou CSV contendo uma coluna chamada **Data**.")
-    f = st.file_uploader("Upload de ficheiro", type=['xlsx', 'csv'])
+    st.markdown("Envie um arquivo Excel ou CSV contendo uma coluna chamada **Data**.")
+    f = st.file_uploader("Upload de arquivo", type=['xlsx', 'csv'])
     
     if f:
         df_in = pd.read_excel(f) if f.name.endswith('.xlsx') else pd.read_csv(f)
@@ -44,19 +44,19 @@ else:
         
         if col_data:
             datas_para_buscar = pd.to_datetime(df_in[col_data], errors='coerce').dropna().dt.date.unique()
-            st.success(f"{len(datas_para_buscar)} datas válidas identificadas no ficheiro.")
+            st.success(f"{len(datas_para_buscar)} datas válidas identificadas no arquivo.")
             
-            # Utiliza a data mais recente do ficheiro como âncora para sugerir os tickers
+            # Utiliza a data mais recente do arquivo como âncora para sugerir os tickers
             ref_date = max(datas_para_buscar) if len(datas_para_buscar) > 0 else datetime.now().date()
             opcoes_disponiveis = di_service.gerar_opcoes_tickers(ref_date, meses_curtos=12, anos_longos=10)
             
             tickers_selecionados = st.multiselect(
-                "Selecione os Vencimentos que deseja monitorizar para estas datas:",
+                "Selecione os Vencimentos que deseja monitorar para estas datas:",
                 options=opcoes_disponiveis,
                 default=opcoes_disponiveis[:4]
             )
         else:
-            st.error("Não foi possível encontrar uma coluna com o nome 'Data' no ficheiro enviado.")
+            st.error("Não foi possível encontrar uma coluna com o nome 'Data' no arquivo enviado.")
 
 # --- BOTÃO DE BUSCA ---
 if st.button("Buscar Taxas", type="primary"):
@@ -71,7 +71,7 @@ if st.button("Buscar Taxas", type="primary"):
     results = []
     bar = st.progress(0)
     
-    with st.spinner("A consultar dados no ADVFN..."):
+    with st.spinner("Consultando dados no ADVFN..."):
         for i, data_ref in enumerate(datas_para_buscar):
             df, err = di_service.consultar_taxas_di_por_tickers(data_ref, tickers_selecionados)
             
@@ -89,16 +89,10 @@ if st.button("Buscar Taxas", type="primary"):
         df_final = pd.concat(results, ignore_index=True)
         st.success("Busca Finalizada com sucesso!")
         
-        # Se for apenas uma data, faz sentido desenhar o gráfico da curva
-        if len(datas_para_buscar) == 1:
-            st.subheader("Visualização da Curva de Juros")
-            # Usa os Dias Úteis como eixo X para refletir a passagem do tempo corretamente
-            df_plot = df_final.sort_values('DIAS_UTEIS')
-            st.line_chart(data=df_plot, x='DIAS_UTEIS', y='TAXA (%)')
-            
+        # Exibe exclusivamente a tabela com os valores de fechamento
         st.dataframe(df_final, use_container_width=True)
         
-        # Geração do ficheiro para download
+        # Geração do arquivo para download
         out = BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
             df_final.to_excel(writer, index=False)

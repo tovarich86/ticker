@@ -9,3 +9,5 @@ curl_cffi
 xlsxwriter
 lxml
 openpyxl
+beautifulsoup4>=4.12.0
+

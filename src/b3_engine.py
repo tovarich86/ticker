@@ -71,15 +71,20 @@ def baixar_e_parsear_dia(data_pregao, tickers_b3, session):
         for col, width in FIELD_SIZES.items():
             slices.append(pl.col('raw').str.slice(start, width).str.strip_chars().alias(col))
             start += width
-        return df_filtered.with_columns(slices).drop('raw').with_columns([
+        df_parsed = df_filtered.with_columns(slices).drop('raw').with_columns([
+            pl.col('FATOR_DE_COTACAO').cast(pl.Float64).alias('_FATCOT'),
+        ])
+        # Preços são (13)V99 → ÷100; depois ÷FATCOT para corrigir cotações históricas (ex: FATCOT=1000 pré-2010)
+        return df_parsed.with_columns([
             pl.col('DATA_DO_PREGAO').str.to_date('%Y%m%d').alias('Date'),
             pl.col('CODIGO_DE_NEGOCIACAO').alias('Ticker'),
-            pl.col('PRECO_DE_ABERTURA').cast(pl.Float64).truediv(100).alias('Open'),
-            pl.col('PRECO_MAXIMO').cast(pl.Float64).truediv(100).alias('High'),
-            pl.col('PRECO_MINIMO').cast(pl.Float64).truediv(100).alias('Low'),
-            pl.col('PRECO_ULTIMO_NEGOCIO').cast(pl.Float64).truediv(100).alias('Close'),
-            # Adicionando o Preço Médio:
-            pl.col('PRECO_MEDIO').cast(pl.Float64).truediv(100).alias('Average'), 
-            pl.col('VOLUME_TOTAL_NEGOCIADO').cast(pl.Float64).alias('Volume')
-        ]).select(['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Volume']).to_pandas()
+            (pl.col('PRECO_DE_ABERTURA').cast(pl.Float64) / 100 / pl.col('_FATCOT')).alias('Open'),
+            (pl.col('PRECO_MAXIMO').cast(pl.Float64) / 100 / pl.col('_FATCOT')).alias('High'),
+            (pl.col('PRECO_MINIMO').cast(pl.Float64) / 100 / pl.col('_FATCOT')).alias('Low'),
+            (pl.col('PRECO_ULTIMO_NEGOCIO').cast(pl.Float64) / 100 / pl.col('_FATCOT')).alias('Close'),
+            (pl.col('PRECO_MEDIO').cast(pl.Float64) / 100 / pl.col('_FATCOT')).alias('Average'),
+            # VOLTOT é (16)V99 → ÷100
+            pl.col('VOLUME_TOTAL_NEGOCIADO').cast(pl.Float64).truediv(100).alias('Volume'),
+            pl.col('QUANTIDADE_NEGOCIADA').cast(pl.Int64).alias('Quantity'),
+        ]).select(['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Volume', 'Quantity']).to_pandas()
     except: return None

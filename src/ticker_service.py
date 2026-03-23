@@ -245,9 +245,14 @@ def buscar_bonificacoes_b3(ticker, empresas_df, data_inicio, data_fim):
         if df.empty:
             return pd.DataFrame()
 
+        # Deduplica por data + tipo: a API retorna um registro por ISIN do mesmo ativo
+        dedup_cols = [c for c in ['lastDatePrior', 'label'] if c in df.columns]
+        if dedup_cols:
+            df = df.drop_duplicates(subset=dedup_cols)
+
         # Adiciona o Ticker internamente
         df['Ticker'] = ticker
-        
+
         if 'lastDatePrior' in df.columns:
             df['lastDatePrior_dt'] = pd.to_datetime(df['lastDatePrior'], format='%d/%m/%Y', errors='coerce')
             df = df.dropna(subset=['lastDatePrior_dt'])
@@ -344,7 +349,7 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
                     df_t = df_t.reset_index()
                     df_t['Date'] = df_t['Date'].dt.strftime('%d/%m/%Y')
                     
-                    cols = ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Adj Close', 'Volume']
+                    cols = ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Adj Close', 'Volume', 'Quantity']
                     cols_existentes = [c for c in cols if c in df_t.columns]
                     resultados[t] = df_t[cols_existentes]
         else:

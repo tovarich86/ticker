@@ -80,8 +80,20 @@ def get_ticker_info(ticker, df_empresas):
     }
 
 
+def parece_b3_ticker(ticker: str) -> bool:
+    """Retorna True se o ticker tiver padrão B3 por formato (3-4 letras + sufixo válido).
+    Não depende de df_empresas — permite encontrar tickers ausentes da API GetInitialCompanies
+    (ex: empresas em processo de cancelamento, tickers recentes, SUB3, VLID3, etc.).
+    """
+    t = ticker.strip().upper()
+    base = ''.join(c for c in t if not c.isdigit())
+    num  = ''.join(c for c in t if c.isdigit())
+    return 3 <= len(base) <= 4 and num in _TIPO_ACAO
+
 def is_b3_ticker(ticker, df_empresas):
-    """Retorna True se o ticker for uma ação/unit negociada na B3."""
+    """Retorna True se o ticker for confirmado na base de empresas da B3.
+    Usado para proventos/bonificações (requer CODE). Para cotações use parece_b3_ticker().
+    """
     ticker_upper = ticker.strip().upper()
     ticker_base = ''.join(c for c in ticker_upper if not c.isdigit())
     ticker_num  = ''.join(c for c in ticker_upper if c.isdigit())
@@ -282,16 +294,17 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
     """
     Lógica Híbrida: B3 (Engine) + Yahoo.
     """
-    if empresas_df.empty:
-        return {}, ["Erro: Base de empresas não carregada. Verifique a URL ou faça upload manual."]
-
     tickers_list = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
     d_ini = datetime.strptime(dt_ini_str, "%d/%m/%Y").date()
     d_fim = datetime.strptime(dt_fim_str, "%d/%m/%Y").date()
-    
-    # Identificação B3 vs Internacional por padrão de ticker + lookup no CODE
-    list_b3 = [t for t in tickers_list if is_b3_ticker(t, empresas_df)]
-    list_yf = [t for t in tickers_list if not is_b3_ticker(t, empresas_df)]
+
+    # Roteamento por PADRÃO de ticker (não depende de df_empresas):
+    # tickers com formato B3 (3-4 letras + sufixo 3/4/5/6/11) → COTAHIST
+    # demais → Yahoo Finance internacional
+    # Isso garante que SUB3, VLID3 e outros ausentes da API GetInitialCompanies
+    # ainda sejam buscados corretamente via COTAHIST.
+    list_b3 = [t for t in tickers_list if parece_b3_ticker(t)]
+    list_yf = [t for t in tickers_list if not parece_b3_ticker(t)]
     
     resultados = {}
     erros = []

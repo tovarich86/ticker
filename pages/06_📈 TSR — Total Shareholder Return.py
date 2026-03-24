@@ -292,7 +292,7 @@ st.markdown("---")
 btn = st.button("Calcular TSR", type="primary")
 
 # ---------------------------------------------------------------------------
-# Processamento
+# Processamento — salva resultados no session_state para sobreviver ao rerun
 # ---------------------------------------------------------------------------
 
 if btn:
@@ -404,9 +404,6 @@ if btn:
         st.error("Nenhum resultado calculado. Verifique os tickers e as datas.")
         st.stop()
 
-    # ── Ranking ────────────────────────────────────────────────────────────
-    st.subheader("Ranking TSR")
-
     cols_rank = ['Ticker', 'P0 (R$)', 'P Final (R$)', 'Mult. Corporativo',
                  'P Final Ajustado (R$)', 'Dividendos/JCP (R$)',
                  'Ret. Preço (%)', 'Ret. Dividendos (%)', 'TSR Total (%)']
@@ -417,25 +414,70 @@ if btn:
     df_rank.index += 1
     df_rank.index.name = 'Pos.'
 
+    # Gera Excel imediatamente após o cálculo
+    def _gerar_excel(res_list, rank):
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+            rank.to_excel(writer, sheet_name='Ranking')
+            writer.sheets['Ranking'].set_column('B:J', 22)
+            for res in res_list:
+                t = res['Ticker']
+                if not res['_df_cotacoes_ini'].empty:
+                    df_ci = res['_df_cotacoes_ini'].copy()
+                    df_ci['Date'] = df_ci['Date'].dt.strftime('%d/%m/%Y')
+                    df_ci.to_excel(writer, sheet_name=f'{t}_P0', index=False)
+                    writer.sheets[f'{t}_P0'].set_column('A:I', 16)
+                if not res['_df_cotacoes_fim'].empty:
+                    df_cf = res['_df_cotacoes_fim'].copy()
+                    df_cf['Date'] = df_cf['Date'].dt.strftime('%d/%m/%Y')
+                    df_cf.to_excel(writer, sheet_name=f'{t}_PFinal', index=False)
+                    writer.sheets[f'{t}_PFinal'].set_column('A:I', 16)
+                if not res['_df_divs'].empty:
+                    res['_df_divs'].to_excel(writer, sheet_name=f'{t}_Divs', index=False)
+                    writer.sheets[f'{t}_Divs'].set_column('A:J', 18)
+                if res['_df_bonif'] is not None and not res['_df_bonif'].empty:
+                    res['_df_bonif'].to_excel(writer, sheet_name=f'{t}_Eventos', index=False)
+                    writer.sheets[f'{t}_Eventos'].set_column('A:J', 18)
+                if res['_divs_detail']:
+                    pd.DataFrame(res['_divs_detail']).to_excel(
+                        writer, sheet_name=f'{t}_DivsAdj', index=False)
+                    writer.sheets[f'{t}_DivsAdj'].set_column('A:F', 22)
+        buf.seek(0)
+        return buf
+
+    # Persiste no session_state para sobreviver ao rerun do download_button
+    st.session_state['tsr_resultados'] = resultados
+    st.session_state['tsr_df_rank']    = df_rank
+    st.session_state['tsr_excel']      = _gerar_excel(resultados, df_rank).getvalue()
+    st.session_state['tsr_nomes']      = '_'.join(tickers)
+    st.session_state['tsr_dt_fim']     = dt_pf_fim.strftime('%Y%m%d')
+
+# ---------------------------------------------------------------------------
+# Exibição — lê do session_state (persiste após rerun do download_button)
+# ---------------------------------------------------------------------------
+
+if 'tsr_resultados' in st.session_state and st.session_state['tsr_resultados']:
+    resultados = st.session_state['tsr_resultados']
+    df_rank    = st.session_state['tsr_df_rank']
+
     def _color_tsr(val):
         if isinstance(val, (int, float)):
             color = '#1a7a1a' if val > 0 else '#b30000' if val < 0 else 'inherit'
             return f'color: {color}; font-weight: bold'
         return ''
 
+    st.subheader("Ranking TSR")
     st.dataframe(
         df_rank.style.applymap(_color_tsr, subset=['TSR Total (%)', 'Ret. Preço (%)', 'Ret. Dividendos (%)']),
         use_container_width=True
     )
 
-    # ── Detalhes por ticker ────────────────────────────────────────────────
     st.subheader("Detalhes por Ativo")
     for res in sorted(resultados, key=lambda x: x['TSR Total (%)'], reverse=True):
         ticker = res['Ticker']
         tsr    = res['TSR Total (%)']
         icon   = "🟢" if tsr > 0 else "🔴" if tsr < 0 else "⚪"
         with st.expander(f"{icon} {ticker}  |  TSR: {tsr:+.2f}%"):
-
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Preço Inicial (P0)", f"R$ {res['P0 (R$)']:.4f}")
             c2.metric("Preço Final Ajustado", f"R$ {res['P Final Ajustado (R$)']:.4f}",
@@ -461,68 +503,10 @@ if btn:
             else:
                 st.info("Nenhum dividendo/JCP no período.")
 
-    # ── Excel Auditoria ────────────────────────────────────────────────────
     st.markdown("---")
-    st.subheader("Exportar Auditoria Excel")
-
-    def _gerar_excel_tsr():
-        buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            wb       = writer.book
-            hdr_fmt  = wb.add_format({'bold': True, 'bg_color': '#1F3864', 'font_color': 'white', 'border': 1})
-            pct_fmt  = wb.add_format({'num_format': '0.00"%"', 'border': 1})
-            num_fmt  = wb.add_format({'num_format': 'R$ #,##0.0000', 'border': 1})
-            num6_fmt = wb.add_format({'num_format': '0.000000', 'border': 1})
-
-            # Aba ranking
-            df_rank.to_excel(writer, sheet_name='Ranking')
-            ws = writer.sheets['Ranking']
-            ws.set_column('B:J', 22)
-
-            # Uma aba por ticker
-            for res in resultados:
-                ticker = res['Ticker']
-
-                # Sub-aba: cotações iniciais
-                if not res['_df_cotacoes_ini'].empty:
-                    df_ci = res['_df_cotacoes_ini'].copy()
-                    df_ci['Date'] = df_ci['Date'].dt.strftime('%d/%m/%Y')
-                    df_ci.to_excel(writer, sheet_name=f'{ticker}_P0', index=False)
-                    writer.sheets[f'{ticker}_P0'].set_column('A:I', 16)
-
-                # Sub-aba: cotações finais
-                if not res['_df_cotacoes_fim'].empty:
-                    df_cf = res['_df_cotacoes_fim'].copy()
-                    df_cf['Date'] = df_cf['Date'].dt.strftime('%d/%m/%Y')
-                    df_cf.to_excel(writer, sheet_name=f'{ticker}_PFinal', index=False)
-                    writer.sheets[f'{ticker}_PFinal'].set_column('A:I', 16)
-
-                # Sub-aba: dividendos
-                if not res['_df_divs'].empty:
-                    res['_df_divs'].to_excel(writer, sheet_name=f'{ticker}_Divs', index=False)
-                    writer.sheets[f'{ticker}_Divs'].set_column('A:J', 18)
-
-                # Sub-aba: eventos corporativos
-                if res['_df_bonif'] is not None and not res['_df_bonif'].empty:
-                    res['_df_bonif'].to_excel(writer, sheet_name=f'{ticker}_Eventos', index=False)
-                    writer.sheets[f'{ticker}_Eventos'].set_column('A:J', 18)
-
-                # Sub-aba: detalhe dividendos ajustados
-                if res['_divs_detail']:
-                    pd.DataFrame(res['_divs_detail']).to_excel(
-                        writer, sheet_name=f'{ticker}_DivsAdj', index=False)
-                    writer.sheets[f'{ticker}_DivsAdj'].set_column('A:F', 22)
-
-        buf.seek(0)
-        return buf
-
-    if st.button("Gerar Excel"):
-        with st.spinner("Gerando..."):
-            excel_buf = _gerar_excel_tsr()
-        nomes = '_'.join(tickers)
-        st.download_button(
-            label="Baixar Auditoria Excel",
-            data=excel_buf,
-            file_name=f"TSR_{nomes}_{dt_pf_fim.strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+    st.download_button(
+        label="📥 Baixar Auditoria Excel",
+        data=st.session_state['tsr_excel'],
+        file_name=f"TSR_{st.session_state['tsr_nomes']}_{st.session_state['tsr_dt_fim']}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

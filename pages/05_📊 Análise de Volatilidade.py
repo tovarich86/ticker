@@ -200,7 +200,7 @@ st.markdown("---")
 btn = st.button("Calcular", type="primary")
 
 # ---------------------------------------------------------------------------
-# Processamento
+# Processamento — só executa quando o botão é clicado
 # ---------------------------------------------------------------------------
 
 if btn:
@@ -218,7 +218,6 @@ if btn:
     yf_tickers   = [f"{t}.SA" if _is_b3(t) else t for t in tickers_list]
     ticker_map   = dict(zip(yf_tickers, tickers_list))
 
-    # Baixa com margem extra para warmup do GARCH/EWMA
     dt_ini_dl = pd.Timestamp(dt_ini) - timedelta(days=janela_chart * 3)
 
     with st.spinner("Baixando dados..."):
@@ -232,7 +231,138 @@ if btn:
     if not isinstance(dados.columns, pd.MultiIndex):
         dados.columns = pd.MultiIndex.from_tuples([(c, yf_tickers[0]) for c in dados.columns])
 
-    anos_range = list(range(pd.Timestamp(dt_ini).year, pd.Timestamp(dt_fim).year + 1))
+    # Gera Excel e persiste tudo no session_state
+    from io import BytesIO
+
+    def _gerar_excel_vol(dados_, yf_tickers_, ticker_map_, metodologias_, lam_, dt_ini_, dt_fim_):
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+            wb = writer.book
+            fmt_pct_xl = wb.add_format({'num_format': '0.00%', 'border': 1})
+            fmt_num    = wb.add_format({'num_format': '0.000000', 'border': 1})
+            fmt_num2   = wb.add_format({'num_format': '0.00', 'border': 1})
+
+            resumo_rows = []
+            FNS_P = {
+                "Histórica (C-C)": vol_periodo_historica,
+                "Parkinson":       vol_periodo_parkinson,
+                "Garman-Klass":    vol_periodo_garman_klass,
+                "Rogers-Satchell": vol_periodo_rogers_satchell,
+            }
+            for yf_t in yf_tickers_:
+                nome = ticker_map_[yf_t]
+                try:
+                    df_full = dados_.xs(yf_t, axis=1, level=1).dropna(how='all')
+                except KeyError:
+                    continue
+                df_periodo = df_full.loc[pd.Timestamp(dt_ini_):pd.Timestamp(dt_fim_)]
+                n_total = len(df_periodo)
+                janelas = []
+                i = 1
+                while i * 252 <= n_total:
+                    janelas.append((i * 252, f"{i} ano{'s' if i > 1 else ''} ({i*252}d úteis)"))
+                    i += 1
+                if n_total % 252 != 0 and n_total > 0:
+                    janelas.append((n_total, f"Período completo ({n_total}d úteis)"))
+
+                for n_j, label in janelas:
+                    df_slice = df_periodo.iloc[-n_j:]
+                    idx_extra = max(0, len(df_periodo) - n_j - 1)
+                    df_slice_yz = df_periodo.iloc[idx_extra:]
+                    row = {"Ticker": nome, "Janela": label, "Dias Úteis": n_j}
+                    for met in metodologias_:
+                        if met == "Yang-Zhang":
+                            v = vol_periodo_yang_zhang(df_slice_yz)
+                        elif met == "EWMA":
+                            v = vol_periodo_ewma(df_slice, lam_)
+                        elif met == "GARCH(1,1)" and GARCH_DISPONIVEL:
+                            v = vol_periodo_garch(df_slice)
+                        elif met in FNS_P:
+                            v = FNS_P[met](df_slice)
+                        else:
+                            v = np.nan
+                        row[met] = v
+                    resumo_rows.append(row)
+
+                # Aba de auditoria por ticker
+                d = df_periodo.copy()
+                if hasattr(d.index, 'tz') and d.index.tz is not None:
+                    d.index = d.index.tz_localize(None)
+                lr = np.log(d['Close'] / d['Close'].shift(1))
+                audit = pd.DataFrame(index=d.index)
+                audit.index.name = 'Data'
+                audit['Open']  = d['Open']
+                audit['High']  = d['High']
+                audit['Low']   = d['Low']
+                audit['Close'] = d['Close']
+                if 'Volume' in d.columns:
+                    audit['Volume'] = d['Volume']
+                audit['ln(C/Cprev)']    = lr
+                audit['ln(C/Cprev)²']   = lr ** 2
+                audit['ln(H/L)']        = np.log(d['High'] / d['Low'])
+                audit['ln(H/L)²']       = audit['ln(H/L)'] ** 2
+                audit['Parkinson_term'] = audit['ln(H/L)²'] / (4 * np.log(2))
+                audit['ln(C/O)²']       = np.log(d['Close'] / d['Open']) ** 2
+                audit['GK_term']        = 0.5 * audit['ln(H/L)²'] - (2 * np.log(2) - 1) * audit['ln(C/O)²']
+                audit['ln(H/O)']        = np.log(d['High'] / d['Open'])
+                audit['ln(H/C)']        = np.log(d['High'] / d['Close'])
+                audit['ln(L/O)']        = np.log(d['Low']  / d['Open'])
+                audit['ln(L/C)']        = np.log(d['Low']  / d['Close'])
+                audit['RS_term']        = audit['ln(H/O)'] * audit['ln(H/C)'] + audit['ln(L/O)'] * audit['ln(L/C)']
+                audit['ln(O/Cprev)']    = np.log(d['Open'] / d['Close'].shift(1))
+                audit['ln(C/O)']        = np.log(d['Close'] / d['Open'])
+                ewma_var = (lr ** 2).ewm(alpha=1 - lam_, adjust=False).mean()
+                audit['EWMA_var']       = ewma_var
+                audit['EWMA_vol_%aa']   = np.sqrt(ewma_var * FA) * 100
+                sn = nome[:31]
+                audit.reset_index().to_excel(writer, sheet_name=sn, index=False)
+                ws = writer.sheets[sn]
+                ws.set_column('A:A', 12)
+                ws.set_column('B:F', 14, fmt_num2)
+                ws.set_column('G:Z', 14, fmt_num)
+
+            if resumo_rows:
+                df_resumo = pd.DataFrame(resumo_rows)
+                df_resumo.to_excel(writer, sheet_name='Resumo', index=False)
+                ws = writer.sheets['Resumo']
+                ws.set_column('A:B', 18)
+                ws.set_column('C:C', 12)
+                for ci in range(3, len(df_resumo.columns)):
+                    ws.set_column(ci, ci, 18, fmt_pct_xl)
+
+        buf.seek(0)
+        return buf
+
+    with st.spinner("Gerando Excel..."):
+        excel_bytes = _gerar_excel_vol(dados, yf_tickers, ticker_map,
+                                       metodologias, lam, dt_ini, dt_fim).getvalue()
+
+    st.session_state['vol_dados']       = dados
+    st.session_state['vol_yf_tickers']  = yf_tickers
+    st.session_state['vol_ticker_map']  = ticker_map
+    st.session_state['vol_tickers_list']= tickers_list
+    st.session_state['vol_metodologias']= metodologias
+    st.session_state['vol_janela']      = janela_chart
+    st.session_state['vol_lam']         = lam
+    st.session_state['vol_dt_ini']      = dt_ini
+    st.session_state['vol_dt_fim']      = dt_fim
+    st.session_state['vol_excel']       = excel_bytes
+    st.session_state['vol_nome_arq']    = f"volatilidade_{'_'.join(tickers_list)}_{dt_fim.strftime('%Y%m%d')}.xlsx"
+
+# ---------------------------------------------------------------------------
+# Exibição — lê do session_state (persiste após rerun do download_button)
+# ---------------------------------------------------------------------------
+
+if 'vol_dados' in st.session_state:
+    dados        = st.session_state['vol_dados']
+    yf_tickers   = st.session_state['vol_yf_tickers']
+    ticker_map   = st.session_state['vol_ticker_map']
+    tickers_list = st.session_state['vol_tickers_list']
+    metodologias = st.session_state['vol_metodologias']
+    janela_chart = st.session_state['vol_janela']
+    lam          = st.session_state['vol_lam']
+    dt_ini       = st.session_state['vol_dt_ini']
+    dt_fim       = st.session_state['vol_dt_fim']
 
     tab_anos, tab_rolling, tab_corr = st.tabs(
         ["📅 Volatilidade por Janela", "📈 Rolling", "🔗 Correlação"]
@@ -389,146 +519,12 @@ if btn:
                 st.error(f"Erro ao calcular correlação: {e}")
 
     # -----------------------------------------------------------------------
-    # EXPORTAÇÃO EXCEL — auditoria completa
+    # Download Excel — já gerado no momento do cálculo
     # -----------------------------------------------------------------------
     st.markdown("---")
-    st.subheader("Exportar para Excel")
-
-    from io import BytesIO
-
-    def gerar_excel():
-        buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            wb  = writer.book
-            fmt_header  = wb.add_format({'bold': True, 'bg_color': '#1F3864', 'font_color': 'white', 'border': 1})
-            fmt_pct_xl  = wb.add_format({'num_format': '0.00%', 'border': 1})
-            fmt_num     = wb.add_format({'num_format': '0.000000', 'border': 1})
-            fmt_num2    = wb.add_format({'num_format': '0.00', 'border': 1})
-            fmt_date    = wb.add_format({'num_format': 'dd/mm/yyyy', 'border': 1})
-            fmt_cell    = wb.add_format({'border': 1})
-
-            # --- Aba Resumo (todas as janelas, todos os tickers) ---
-            resumo_rows = []
-            for yf_t in yf_tickers:
-                nome = ticker_map[yf_t]
-                try:
-                    df_full = dados.xs(yf_t, axis=1, level=1).dropna(how='all')
-                except KeyError:
-                    continue
-                df_periodo = df_full.loc[pd.Timestamp(dt_ini):pd.Timestamp(dt_fim)]
-                n_dias_total = len(df_periodo)
-                janelas = []
-                i = 1
-                while i * 252 <= n_dias_total:
-                    janelas.append((i * 252, f"{i} ano{'s' if i > 1 else ''} ({i*252}d úteis)"))
-                    i += 1
-                if n_dias_total % 252 != 0 and n_dias_total > 0:
-                    janelas.append((n_dias_total, f"Período completo ({n_dias_total}d úteis)"))
-
-                FNS_P = {
-                    "Histórica (C-C)": vol_periodo_historica,
-                    "Parkinson":       vol_periodo_parkinson,
-                    "Garman-Klass":    vol_periodo_garman_klass,
-                    "Rogers-Satchell": vol_periodo_rogers_satchell,
-                }
-                for n_j, label in janelas:
-                    df_slice = df_periodo.iloc[-n_j:]
-                    idx_extra = max(0, len(df_periodo) - n_j - 1)
-                    df_slice_yz = df_periodo.iloc[idx_extra:]
-                    row = {"Ticker": nome, "Janela": label, "Dias Úteis": n_j}
-                    for met in metodologias:
-                        if met == "Yang-Zhang":
-                            v = vol_periodo_yang_zhang(df_slice_yz)
-                        elif met == "EWMA":
-                            v = vol_periodo_ewma(df_slice, lam)
-                        elif met == "GARCH(1,1)" and GARCH_DISPONIVEL:
-                            v = vol_periodo_garch(df_slice)
-                        elif met in FNS_P:
-                            v = FNS_P[met](df_slice)
-                        else:
-                            v = np.nan
-                        row[met] = v
-                    resumo_rows.append(row)
-
-            if resumo_rows:
-                df_resumo = pd.DataFrame(resumo_rows)
-                df_resumo.to_excel(writer, sheet_name='Resumo', index=False)
-                ws = writer.sheets['Resumo']
-                ws.set_column('A:B', 18)
-                ws.set_column('C:C', 12)
-                for col_idx in range(3, len(df_resumo.columns)):
-                    ws.set_column(col_idx, col_idx, 18, fmt_pct_xl)
-
-            # --- Uma aba por ticker com cotações + cálculos intermediários ---
-            for yf_t in yf_tickers:
-                nome = ticker_map[yf_t]
-                try:
-                    df_full = dados.xs(yf_t, axis=1, level=1).dropna(how='all')
-                except KeyError:
-                    continue
-                df_periodo = df_full.loc[pd.Timestamp(dt_ini):pd.Timestamp(dt_fim)]
-                if df_periodo.empty:
-                    continue
-
-                d = df_periodo.copy()
-                d.index = d.index.tz_localize(None)  # remove timezone para Excel
-
-                audit = pd.DataFrame(index=d.index)
-                audit.index.name = 'Data'
-                audit['Open']   = d['Open']
-                audit['High']   = d['High']
-                audit['Low']    = d['Low']
-                audit['Close']  = d['Close']
-                if 'Volume' in d.columns:
-                    audit['Volume'] = d['Volume']
-
-                # Retorno logarítmico
-                lr = np.log(d['Close'] / d['Close'].shift(1))
-                audit['ln(C/Cprev)']   = lr
-                audit['ln(C/Cprev)²']  = lr ** 2
-
-                # Parkinson
-                audit['ln(H/L)']       = np.log(d['High'] / d['Low'])
-                audit['ln(H/L)²']      = audit['ln(H/L)'] ** 2
-                audit['Parkinson_term'] = audit['ln(H/L)²'] / (4 * np.log(2))
-
-                # Garman-Klass
-                audit['ln(C/O)²']      = np.log(d['Close'] / d['Open']) ** 2
-                audit['GK_term']       = 0.5 * audit['ln(H/L)²'] - (2 * np.log(2) - 1) * audit['ln(C/O)²']
-
-                # Rogers-Satchell
-                audit['ln(H/O)']       = np.log(d['High'] / d['Open'])
-                audit['ln(H/C)']       = np.log(d['High'] / d['Close'])
-                audit['ln(L/O)']       = np.log(d['Low']  / d['Open'])
-                audit['ln(L/C)']       = np.log(d['Low']  / d['Close'])
-                audit['RS_term']       = audit['ln(H/O)'] * audit['ln(H/C)'] + audit['ln(L/O)'] * audit['ln(L/C)']
-
-                # Yang-Zhang
-                audit['ln(O/Cprev)']   = np.log(d['Open'] / d['Close'].shift(1))  # overnight gap
-                audit['ln(C/O)']       = np.log(d['Close'] / d['Open'])            # intraday
-
-                # EWMA
-                ewma_var = (lr ** 2).ewm(alpha=1 - lam, adjust=False).mean()
-                audit['EWMA_var']      = ewma_var
-                audit['EWMA_vol_%aa']  = np.sqrt(ewma_var * FA) * 100
-
-                sheet_name = nome[:31]  # Excel limita a 31 chars
-                audit.reset_index().to_excel(writer, sheet_name=sheet_name, index=False)
-                ws = writer.sheets[sheet_name]
-                ws.set_column('A:A', 12)
-                ws.set_column('B:F', 14, fmt_num2)
-                ws.set_column('G:Z', 14, fmt_num)
-
-        buf.seek(0)
-        return buf
-
-    if st.button("Gerar Excel para Auditoria"):
-        with st.spinner("Gerando arquivo..."):
-            excel_buf = gerar_excel()
-        nome_arquivo = f"volatilidade_{'_'.join(tickers_list)}_{dt_fim.strftime('%Y%m%d')}.xlsx"
-        st.download_button(
-            label="Baixar Excel",
-            data=excel_buf,
-            file_name=nome_arquivo,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+    st.download_button(
+        label="📥 Baixar Excel para Auditoria",
+        data=st.session_state['vol_excel'],
+        file_name=st.session_state['vol_nome_arq'],
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

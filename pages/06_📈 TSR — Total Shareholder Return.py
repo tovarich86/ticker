@@ -1,512 +1,530 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 import yfinance as yf
-from concurrent.futures import ThreadPoolExecutor
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
 from datetime import datetime, timedelta
-from io import BytesIO
+import warnings
 import sys, os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src import ticker_service, b3_engine
 
-st.set_page_config(page_title="TSR", layout="wide")
-st.title("📈 TSR — Total Shareholder Return")
-st.caption("B3 (COTAHIST + Proventos + Eventos Corporativos) | Internacional (Yahoo Finance)")
-
-# ---------------------------------------------------------------------------
-# Helpers de preço
-# ---------------------------------------------------------------------------
-
-def _buscar_cotacoes_periodo(tickers: list, dt_ini, dt_fim) -> pd.DataFrame:
-    """Baixa COTAHIST para o período e retorna DataFrame com Open/High/Low/Close/Average/Volume."""
-    dias = b3_engine.listar_dias_uteis(dt_ini, dt_fim)
-    frames = []
-    with requests.Session() as session:
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            futs = [ex.submit(b3_engine.baixar_e_parsear_dia, d, tickers, session) for d in dias]
-            for f in futs:
-                r = f.result()
-                if r is not None:
-                    frames.append(r)
-    if not frames:
-        return pd.DataFrame()
-    df = pd.concat(frames, ignore_index=True)
-    df['Date'] = pd.to_datetime(df['Date'])
-    return df.sort_values(['Ticker', 'Date'])
-
-
-def _calcular_preco(df_ticker: pd.DataFrame, tipo: str) -> float | None:
-    """Retorna o preço representativo do período conforme o tipo escolhido."""
-    if df_ticker.empty:
-        return None
-    if tipo == "Fechamento (último dia)":
-        return float(df_ticker.iloc[-1]['Close'])
-    elif tipo == "Média Simples (closes)":
-        return float(df_ticker['Close'].mean())
-    elif tipo == "VWAP (média ponderada pelo volume)":
-        # Usa Quantity (QUANTIDADE_NEGOCIADA do COTAHIST) diretamente
-        qty = df_ticker['Quantity'] if 'Quantity' in df_ticker.columns else df_ticker['Volume'] / df_ticker['Average'].replace(0, np.nan)
-        avg = df_ticker['Average']
-        denom = qty.replace(0, np.nan).sum()
-        if pd.isna(denom) or denom == 0:
-            return float(avg.mean())
-        return float((qty * avg).sum() / denom)
-    return None
+st.set_page_config(page_title="Volatilidade", layout="wide")
+st.title("📊 Análise de Volatilidade")
+st.caption("Metodologias estatísticas com dados do Yahoo Finance")
 
 # ---------------------------------------------------------------------------
-# Helpers Yahoo Finance (tickers internacionais)
+# Verificação do pacote arch (GARCH)
 # ---------------------------------------------------------------------------
+try:
+    from arch import arch_model
+    GARCH_DISPONIVEL = True
+except ImportError:
+    GARCH_DISPONIVEL = False
 
-def _buscar_cotacoes_yf(ticker: str, dt_ini, dt_fim) -> pd.DataFrame:
-    """Cotações via Yahoo Finance para tickers internacionais."""
-    try:
-        df = yf.download(ticker, start=dt_ini, end=dt_fim + timedelta(days=1),
-                         auto_adjust=False, progress=False)
-        if df.empty:
-            return pd.DataFrame()
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.reset_index()
-        df['Ticker'] = ticker
-        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
-        # Average como HLC/3; Quantity = Volume (ações negociadas)
-        df['Average'] = (df['High'] + df['Low'] + df['Close']) / 3
-        df['Quantity'] = df['Volume'].astype('Int64')
-        return df[['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Volume', 'Quantity']].sort_values('Date')
-    except Exception:
-        return pd.DataFrame()
-
-
-def _buscar_dividendos_yf(ticker: str, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
-    """Dividendos via Yahoo Finance no período [t0, t1]."""
-    try:
-        divs = yf.Ticker(ticker).dividends
-        if divs.empty:
-            return pd.DataFrame()
-        divs = divs.reset_index()
-        divs.columns = ['Date', 'value']
-        divs['Date'] = pd.to_datetime(divs['Date']).dt.tz_localize(None)
-        divs = divs[(divs['Date'] >= t0) & (divs['Date'] <= t1)].copy()
-        if divs.empty:
-            return pd.DataFrame()
-        divs['Ticker'] = ticker
-        divs['lastDatePriorEx'] = divs['Date'].dt.strftime('%d/%m/%Y')
-        divs['paymentDate'] = ''
-        divs['label'] = 'Dividendo'
-        divs['typeStock'] = ''
-        return divs[['Ticker', 'lastDatePriorEx', 'paymentDate', 'label', 'value']]
-    except Exception:
-        return pd.DataFrame()
-
-
-def _buscar_splits_yf(ticker: str, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
-    """Splits/reverse splits via Yahoo Finance no período [t0, t1].
-    O campo 'factor' é o ratio direto (ex: 2.0 para split 2:1).
-    Label 'SPLIT_YF' sinaliza que mult = factor (não aplica fórmula B3).
-    """
-    try:
-        splits = yf.Ticker(ticker).splits
-        if splits.empty:
-            return pd.DataFrame()
-        splits = splits.reset_index()
-        splits.columns = ['Date', 'factor']
-        splits['Date'] = pd.to_datetime(splits['Date']).dt.tz_localize(None)
-        splits = splits[(splits['Date'] >= t0) & (splits['Date'] <= t1)].copy()
-        if splits.empty:
-            return pd.DataFrame()
-        splits['Ticker'] = ticker
-        splits['lastDatePrior'] = splits['Date'].dt.strftime('%d/%m/%Y')
-        splits['label'] = 'SPLIT_YF'
-        return splits[['Ticker', 'lastDatePrior', 'label', 'factor']]
-    except Exception:
-        return pd.DataFrame()
-
+FA = 252  # dias úteis para anualização
 
 # ---------------------------------------------------------------------------
-# TSR
+# Funções — Rolling (para o gráfico)
 # ---------------------------------------------------------------------------
 
-def _parse_float(val):
-    try:
-        return float(str(val).replace(',', '.'))
-    except Exception:
+def roll_historica(df, janela):
+    lr = np.log(df['Close'] / df['Close'].shift(1))
+    return lr.rolling(janela).std() * np.sqrt(FA)
+
+def roll_parkinson(df, janela):
+    log_hl2 = np.log(df['High'] / df['Low']) ** 2
+    return np.sqrt(log_hl2.rolling(janela).mean() / (4 * np.log(2)) * FA)
+
+def roll_garman_klass(df, janela):
+    log_hl2 = np.log(df['High'] / df['Low']) ** 2
+    log_co2 = np.log(df['Close'] / df['Open']) ** 2
+    gk = 0.5 * log_hl2 - (2 * np.log(2) - 1) * log_co2
+    return np.sqrt(gk.rolling(janela).mean() * FA)
+
+def roll_rogers_satchell(df, janela):
+    rs = (np.log(df['High'] / df['Open']) * np.log(df['High'] / df['Close'])
+        + np.log(df['Low']  / df['Open']) * np.log(df['Low']  / df['Close']))
+    return np.sqrt(rs.rolling(janela).mean() * FA)
+
+def roll_yang_zhang(df, janela, k=0.34):
+    log_oc = np.log(df['Open'] / df['Close'].shift(1))
+    log_co = np.log(df['Close'] / df['Open'])
+    rs     = (np.log(df['High'] / df['Open']) * np.log(df['High'] / df['Close'])
+            + np.log(df['Low']  / df['Open']) * np.log(df['Low']  / df['Close']))
+    v_n = log_oc.rolling(janela).var()
+    v_d = log_co.rolling(janela).var()
+    rs_m = rs.rolling(janela).mean()
+    k_adj = k / (1 + k + (janela + 1) / (janela - 1))
+    return np.sqrt((v_n + k_adj * v_d + (1 - k_adj) * rs_m) * FA)
+
+def roll_ewma(df, lam):
+    """EWMA RiskMetrics: σ²_t = λ·σ²_{t-1} + (1-λ)·r²_t"""
+    lr = np.log(df['Close'] / df['Close'].shift(1))
+    var_ew = (lr ** 2).ewm(alpha=1 - lam, adjust=False).mean()
+    return np.sqrt(var_ew * FA)
+
+def roll_garch(df):
+    """GARCH(1,1): volatilidade condicional ajustada em todo o período."""
+    lr = np.log(df['Close'] / df['Close'].shift(1)).dropna() * 100
+    if len(lr) < 100:
+        return pd.Series(np.nan, index=df.index)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = arch_model(lr, vol='Garch', p=1, q=1, dist='normal', rescale=False).fit(disp='off')
+    cond_vol = res.conditional_volatility / 100 * np.sqrt(FA)
+    return cond_vol.reindex(df.index)
+
+# ---------------------------------------------------------------------------
+# Funções — Realizadas por subperíodo (para a tabela por ano)
+# ---------------------------------------------------------------------------
+
+# Cada função recebe um slice de df com exatamente N dias úteis e retorna
+# a volatilidade realizada anualizada — pronta para uso em Black-Scholes / MC.
+
+def vol_periodo_historica(df):
+    lr = np.log(df['Close'] / df['Close'].shift(1)).dropna()
+    return lr.std() * np.sqrt(FA)
+
+def vol_periodo_parkinson(df):
+    log_hl2 = (np.log(df['High'] / df['Low']) ** 2).dropna()
+    return np.sqrt(log_hl2.mean() / (4 * np.log(2)) * FA)
+
+def vol_periodo_garman_klass(df):
+    log_hl2 = np.log(df['High'] / df['Low']) ** 2
+    log_co2 = np.log(df['Close'] / df['Open']) ** 2
+    gk = (0.5 * log_hl2 - (2 * np.log(2) - 1) * log_co2).dropna()
+    return np.sqrt(gk.mean() * FA)
+
+def vol_periodo_rogers_satchell(df):
+    rs = (np.log(df['High'] / df['Open']) * np.log(df['High'] / df['Close'])
+        + np.log(df['Low']  / df['Open']) * np.log(df['Low']  / df['Close'])).dropna()
+    return np.sqrt(rs.mean() * FA)
+
+def vol_periodo_yang_zhang(df, k=0.34):
+    """YZ direto sobre o slice — inclui 1 dia extra para o gap overnight do 1º dia."""
+    log_oc = np.log(df['Open'] / df['Close'].shift(1)).dropna()
+    log_co = np.log(df['Close'] / df['Open']).dropna()
+    log_ho = np.log(df['High'] / df['Open'])
+    log_hc = np.log(df['High'] / df['Close'])
+    log_lo = np.log(df['Low']  / df['Open'])
+    log_lc = np.log(df['Low']  / df['Close'])
+    rs = (log_ho * log_hc + log_lo * log_lc).dropna()
+    n = len(rs)
+    if n < 5:
         return np.nan
+    k_adj = k / (1 + k + (n + 1) / (n - 1))
+    yz = log_oc.var() + k_adj * log_co.var() + (1 - k_adj) * rs.mean()
+    return np.sqrt(yz * FA)
 
+def vol_periodo_ewma(df, lam):
+    """EWMA sobre o slice — o valor final representa a vol corrente ponderada."""
+    lr = np.log(df['Close'] / df['Close'].shift(1)).dropna()
+    var_ew = (lr ** 2).ewm(alpha=1 - lam, adjust=False).mean()
+    return float(np.sqrt(var_ew.iloc[-1] * FA))
 
-def calcular_tsr(ticker: str, p0: float, p_final: float,
-                 df_divs: pd.DataFrame, df_bonif: pd.DataFrame,
-                 t0: pd.Timestamp, t1: pd.Timestamp) -> dict:
-    """
-    TSR na base de 1 ação adquirida ao preço P0 em t0.
+def vol_periodo_garch(df):
+    """GARCH(1,1) ajustado sobre o slice — retorna vol condicional final."""
+    lr = np.log(df['Close'] / df['Close'].shift(1)).dropna() * 100
+    if len(lr) < 60:
+        return np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = arch_model(lr, vol='Garch', p=1, q=1, dist='normal', rescale=False).fit(disp='off')
+    return float(res.conditional_volatility.iloc[-1] / 100 * np.sqrt(FA))
 
-    Eventos corporativos (bonificações/splits/grupamentos) são tratados como
-    multiplicadores da quantidade de ações:
-        mult = ∏ (1 + factor_i)   para todos os eventos entre t0 e t1
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    Dividendos são creditados proporcionalmente à quantidade de ações vigente
-    na data ex (mais ações após splits = mais dividendos totais recebidos).
+def _is_b3(t: str) -> bool:
+    base = ''.join(c for c in t if not c.isdigit())
+    num  = ''.join(c for c in t if c.isdigit())
+    return len(base) == 4 and num in {'3', '4', '5', '6', '11'}
 
-    TSR = (P_final × mult_final  −  P0  +  Σ div_j × mult_em_j) / P0
-    """
+def fmt_pct(v):
+    return f"{v * 100:.2f}%" if pd.notna(v) else "N/D"
 
-    # --- Eventos corporativos ordenados ---
-    eventos = []
-    if not df_bonif.empty and 'lastDatePrior' in df_bonif.columns:
-        for _, row in df_bonif.iterrows():
-            dt    = pd.to_datetime(row.get('lastDatePrior', ''), format='%d/%m/%Y', errors='coerce')
-            fac   = _parse_float(row.get('factor', 0))
-            label = str(row.get('label', '')).upper()
-            if pd.notna(dt) and pd.notna(fac) and fac != 0:
-                if t0 < dt <= t1:
-                    # Multiplicador por fonte:
-                    # B3: factor = "novas ações por 100 existentes" → mult = 1 + factor/100
-                    #   BONIFICACAO 1%    factor=1    → 1.01
-                    #   DESDOBRAMENTO 5:1 factor=400  → 5.00
-                    #   GRUPAMENTO 5:1    factor=-80  → 0.20
-                    # Yahoo (SPLIT_YF): factor já é o ratio direto → mult = factor
-                    #   Split 2:1  factor=2.0  → 2.00
-                    #   RSplit 1:10 factor=0.1 → 0.10
-                    if label == 'SPLIT_YF':
-                        mult = fac
-                    else:
-                        mult = 1.0 + fac / 100.0
-                    eventos.append({'date': dt, 'mult': round(mult, 8), 'factor': fac, 'label': row.get('label', '')})
-    eventos.sort(key=lambda x: x['date'])
+OPCOES_MET = ["Histórica (C-C)", "Parkinson", "Garman-Klass",
+              "Rogers-Satchell", "Yang-Zhang", "EWMA"]
+if GARCH_DISPONIVEL:
+    OPCOES_MET.append("GARCH(1,1)")
 
-    # Multiplicador acumulado em cada ponto do tempo
-    def mult_ate(data: pd.Timestamp) -> float:
-        m = 1.0
-        for ev in eventos:
-            if ev['date'] <= data:
-                m *= ev['mult']
-        return m
-
-    mult_final = mult_ate(t1)
-
-    # --- Dividendos ---
-    total_divs = 0.0
-    divs_detail = []
-    if not df_divs.empty and 'value' in df_divs.columns:
-        for _, row in df_divs.iterrows():
-            dt_ex = pd.to_datetime(row.get('lastDatePriorEx', ''), format='%d/%m/%Y', errors='coerce')
-            val   = _parse_float(row.get('value', 0))
-            if pd.isna(dt_ex) or pd.isna(val):
-                continue
-            # Quantidade de ações no momento do dividendo
-            m_div = mult_ate(dt_ex)
-            div_total = m_div * val
-            total_divs += div_total
-            divs_detail.append({
-                'Data Ex':          row.get('lastDatePriorEx', ''),
-                'Pagamento':        row.get('paymentDate', ''),
-                'Tipo':             row.get('label', ''),
-                'Valor/Ação (R$)':  val,
-                'Multiplicador':    round(m_div, 6),
-                'Total Recebido (R$)': round(div_total, 6),
-            })
-
-    # --- TSR decomposição ---
-    p_final_adj  = p_final * mult_final
-    ret_preco    = (p_final_adj - p0) / p0
-    ret_divs     = total_divs / p0
-    ret_bonif    = (mult_final - 1) * p_final / p0   # parcela de preço devida aos eventos
-    tsr_total    = ret_preco + ret_divs
-
-    return {
-        'Ticker':             ticker,
-        'P0 (R$)':            round(p0, 4),
-        'P Final (R$)':       round(p_final, 4),
-        'Mult. Corporativo':  round(mult_final, 6),
-        'P Final Ajustado (R$)': round(p_final_adj, 4),
-        'Dividendos/JCP (R$)':   round(total_divs, 4),
-        'Ret. Preço (%)':     round(ret_preco * 100, 2),
-        'Ret. Dividendos (%)': round(ret_divs * 100, 2),
-        'TSR Total (%)':      round(tsr_total * 100, 2),
-        '_divs_detail':       divs_detail,
-        '_eventos':           eventos,
-    }
+DESCRICOES = {
+    "Histórica (C-C)":  "Desvio padrão dos log-retornos diários. Referência, mas ignora variação intraday.",
+    "Parkinson":        "Usa High/Low. ~5× mais eficiente que C-C, mas ignora gaps e tendência.",
+    "Garman-Klass":     "Usa OHLC. Mais preciso que Parkinson, mas assume ausência de gaps noturnos.",
+    "Rogers-Satchell":  "Usa OHLC, independente de drift. Robusto para ativos em tendência.",
+    "Yang-Zhang":       "Combina gap overnight + Rogers-Satchell. Estimador de menor variância disponível.",
+    "EWMA":             "RiskMetrics (λ=0,94): pondera mais as observações recentes. Reage rápido a choques.",
+    "GARCH(1,1)":       "Modelo paramétrico de volatilidade condicional. Captura clustering de volatilidade.",
+}
 
 # ---------------------------------------------------------------------------
 # Inputs
 # ---------------------------------------------------------------------------
 
-st.subheader("1. Ativos")
-tickers_raw = st.text_input("Tickers (B3 e/ou internacionais):",
-                             placeholder="Ex: PETR4, VALE3, AAPL, MSFT",
-                             help="Ações B3 usam COTAHIST; internacionais usam Yahoo Finance")
+col1, col2 = st.columns(2)
+with col1:
+    tickers_raw = st.text_input("Tickers:", placeholder="Ex: PETR4, VALE3, AAPL",
+                                help="Tickers B3 sem .SA — sufixo adicionado automaticamente")
+with col2:
+    metodologias = st.multiselect("Metodologias:", OPCOES_MET,
+                                  default=["Histórica (C-C)", "Garman-Klass", "Yang-Zhang", "EWMA"])
 
-# Parseia tickers em tempo real para exibir inputs por ticker no modo manual
-_tickers_preview = [t.strip().upper() for t in tickers_raw.split(',') if t.strip()]
-
-st.subheader("2. Preço Inicial")
-modo_p0 = st.radio("Origem do preço inicial:", ["Calcular por período", "Inserir valor manualmente"],
-                   horizontal=True)
-
-col_ini1, col_ini2, col_ini3 = st.columns(3)
+col3, col4, col5 = st.columns(3)
 dt_hoje = datetime.now().date()
+with col3:
+    dt_ini = st.date_input("Data inicial:", value=dt_hoje - timedelta(days=365 * 3), format="DD/MM/YYYY")
+with col4:
+    dt_fim = st.date_input("Data final:", value=dt_hoje, format="DD/MM/YYYY")
+with col5:
+    janela_chart = st.selectbox("Janela rolling (gráfico):", [21, 42, 63, 126],
+                                format_func=lambda x: {21:"21d (~1m)", 42:"42d (~2m)",
+                                                        63:"63d (~3m)", 126:"126d (~6m)"}[x])
 
-if modo_p0 == "Calcular por período":
-    with col_ini1:
-        dt_p0_ini = st.date_input("Início período inicial:", value=dt_hoje - timedelta(days=365),
-                                   format="DD/MM/YYYY", key="dt_p0_ini")
-    with col_ini2:
-        dt_p0_fim = st.date_input("Fim período inicial:", value=dt_hoje - timedelta(days=345),
-                                   format="DD/MM/YYYY", key="dt_p0_fim")
-    with col_ini3:
-        tipo_p0 = st.selectbox("Tipo de preço inicial:",
-                               ["Fechamento (último dia)", "Média Simples (closes)", "VWAP (média ponderada pelo volume)"])
-    p0_por_ticker = {}
-else:
-    with col_ini1:
-        dt_p0_fim = st.date_input("Data de referência:", value=dt_hoje - timedelta(days=365),
-                                   format="DD/MM/YYYY", key="dt_p0_ref")
-        dt_p0_ini = dt_p0_fim
-    tipo_p0 = None
-    # Um input por ticker
-    p0_por_ticker = {}
-    if _tickers_preview:
-        cols_p0 = st.columns(min(len(_tickers_preview), 4))
-        for i, t in enumerate(_tickers_preview):
-            with cols_p0[i % 4]:
-                p0_por_ticker[t] = st.number_input(f"P0 {t}:", min_value=0.0001,
-                                                    value=10.0, step=0.01, format="%.4f",
-                                                    key=f"p0_{t}")
-    else:
-        st.info("Digite os tickers acima para inserir os preços iniciais.")
+lam = 0.94
+if "EWMA" in metodologias:
+    lam = st.slider("Lambda EWMA (λ):", 0.85, 0.99, 0.94, 0.01,
+                    help="Valores próximos de 1 dão mais peso ao passado. RiskMetrics usa 0,94.")
 
-st.subheader("3. Preço Final")
-col_fim1, col_fim2, col_fim3 = st.columns(3)
-with col_fim1:
-    dt_pf_ini = st.date_input("Início período final:", value=dt_hoje - timedelta(days=20),
-                               format="DD/MM/YYYY", key="dt_pf_ini")
-with col_fim2:
-    dt_pf_fim = st.date_input("Fim período final:", value=dt_hoje,
-                               format="DD/MM/YYYY", key="dt_pf_fim")
-with col_fim3:
-    tipo_pf = st.selectbox("Tipo de preço final:",
-                           ["Fechamento (último dia)", "Média Simples (closes)", "VWAP (média ponderada pelo volume)"])
+if not GARCH_DISPONIVEL and "GARCH(1,1)" in metodologias:
+    st.warning("Pacote `arch` não instalado. Execute `pip install arch` para habilitar o GARCH.")
+
+with st.expander("O que cada metodologia calcula?"):
+    for met in OPCOES_MET:
+        st.markdown(f"**{met}:** {DESCRICOES.get(met, '')}")
 
 st.markdown("---")
-btn = st.button("Calcular TSR", type="primary")
+btn = st.button("Calcular", type="primary")
 
 # ---------------------------------------------------------------------------
-# Processamento — salva resultados no session_state para sobreviver ao rerun
+# Processamento — só executa quando o botão é clicado
 # ---------------------------------------------------------------------------
 
 if btn:
     if not tickers_raw.strip():
         st.warning("Informe pelo menos um ticker.")
         st.stop()
-
-    tickers = [t.strip().upper() for t in tickers_raw.split(',') if t.strip()]
-
-    t0 = pd.Timestamp(dt_p0_fim)   # data de referência do preço inicial
-    t1 = pd.Timestamp(dt_pf_fim)   # data de referência do preço final
-
-    if t0 >= t1:
-        st.warning("A data final deve ser posterior à data inicial.")
+    if not metodologias:
+        st.warning("Selecione ao menos uma metodologia.")
+        st.stop()
+    if dt_ini >= dt_fim:
+        st.warning("A data inicial deve ser anterior à data final.")
         st.stop()
 
-    # Carrega empresas B3 apenas se houver tickers B3 na lista
-    with st.spinner("Identificando tickers..."):
-        df_empresas = ticker_service.carregar_empresas()
+    tickers_list = [t.strip().upper() for t in tickers_raw.split(',') if t.strip()]
+    yf_tickers   = [f"{t}.SA" if _is_b3(t) else t for t in tickers_list]
+    ticker_map   = dict(zip(yf_tickers, tickers_list))
 
-    tickers_b3  = [t for t in tickers if ticker_service.is_b3_ticker(t, df_empresas)]
-    tickers_yf  = [t for t in tickers if not ticker_service.is_b3_ticker(t, df_empresas)]
+    dt_ini_dl = pd.Timestamp(dt_ini) - timedelta(days=janela_chart * 3)
 
-    if tickers_b3 and df_empresas.empty:
-        st.error("Não foi possível carregar a base de empresas da B3.")
+    with st.spinner("Baixando dados..."):
+        dados = yf.download(yf_tickers, start=dt_ini_dl, end=dt_fim + timedelta(days=1),
+                            progress=False, auto_adjust=True)
+
+    if dados.empty:
+        st.error("Nenhum dado retornado. Verifique os tickers informados.")
         st.stop()
 
-    resultados = []
-    log_container = st.expander("Log de processamento", expanded=False)
+    if not isinstance(dados.columns, pd.MultiIndex):
+        dados.columns = pd.MultiIndex.from_tuples([(c, yf_tickers[0]) for c in dados.columns])
 
-    for ticker in tickers:
-        is_b3 = ticker in tickers_b3
-        moeda = "R$" if is_b3 else "$"
+    # Gera Excel e persiste tudo no session_state
+    from io import BytesIO
 
-        with log_container:
-            fonte = "B3" if is_b3 else "Yahoo Finance"
-            st.write(f"**── {ticker} ({fonte}) ──**")
-
-        # ── Preço Inicial ──────────────────────────────────────────────────
-        p0_manual = p0_por_ticker.get(ticker)  # None se modo "Calcular por período"
-        if p0_manual:
-            p0 = float(p0_manual)
-            df_ini_t = pd.DataFrame()
-            with log_container:
-                st.write(f"P0 manual: {moeda} {p0:.4f}")
-        else:
-            with log_container:
-                st.write(f"Baixando cotações iniciais ({dt_p0_ini} → {dt_p0_fim})...")
-            if is_b3:
-                df_ini = _buscar_cotacoes_periodo([ticker], dt_p0_ini, dt_p0_fim)
-                df_ini_t = df_ini[df_ini['Ticker'] == ticker] if not df_ini.empty else pd.DataFrame()
-            else:
-                df_ini_t = _buscar_cotacoes_yf(ticker, dt_p0_ini, dt_p0_fim)
-            p0 = _calcular_preco(df_ini_t, tipo_p0)
-            if p0 is None:
-                with log_container:
-                    st.warning(f"Sem cotações no período inicial para {ticker}. Pulando.")
-                continue
-            with log_container:
-                st.write(f"P0 ({tipo_p0}): {moeda} {p0:.4f}  ({len(df_ini_t)} pregões)")
-
-        # ── Preço Final ────────────────────────────────────────────────────
-        with log_container:
-            st.write(f"Baixando cotações finais ({dt_pf_ini} → {dt_pf_fim})...")
-        if is_b3:
-            df_fim = _buscar_cotacoes_periodo([ticker], dt_pf_ini, dt_pf_fim)
-            df_fim_t = df_fim[df_fim['Ticker'] == ticker] if not df_fim.empty else pd.DataFrame()
-        else:
-            df_fim_t = _buscar_cotacoes_yf(ticker, dt_pf_ini, dt_pf_fim)
-        p_final = _calcular_preco(df_fim_t, tipo_pf)
-        if p_final is None:
-            with log_container:
-                st.warning(f"Sem cotações no período final para {ticker}. Pulando.")
-            continue
-        with log_container:
-            st.write(f"P Final ({tipo_pf}): {moeda} {p_final:.4f}  ({len(df_fim_t)} pregões)")
-
-        # ── Dividendos / JCP ───────────────────────────────────────────────
-        with log_container:
-            st.write(f"Buscando dividendos ({t0.date()} → {t1.date()})...")
-        if is_b3:
-            df_divs = ticker_service.buscar_dividendos_b3(ticker, df_empresas, t0, t1)
-        else:
-            df_divs = _buscar_dividendos_yf(ticker, t0, t1)
-        n_divs = len(df_divs) if not df_divs.empty else 0
-        with log_container:
-            st.write(f"Dividendos encontrados: {n_divs} eventos")
-
-        # ── Eventos Corporativos ───────────────────────────────────────────
-        with log_container:
-            st.write(f"Buscando eventos corporativos ({t0.date()} → {t1.date()})...")
-        if is_b3:
-            df_bonif = ticker_service.buscar_bonificacoes_b3(ticker, df_empresas, t0, t1)
-        else:
-            df_bonif = _buscar_splits_yf(ticker, t0, t1)
-        n_bonif = len(df_bonif) if not df_bonif.empty else 0
-        with log_container:
-            st.write(f"Eventos corporativos: {n_bonif}")
-
-        # ── Cálculo TSR ────────────────────────────────────────────────────
-        res = calcular_tsr(ticker, p0, p_final, df_divs, df_bonif, t0, t1)
-        res['_df_cotacoes_ini'] = df_ini_t if p0_manual is None else pd.DataFrame()
-        res['_df_cotacoes_fim'] = df_fim_t
-        res['_df_divs']         = df_divs
-        res['_df_bonif']        = df_bonif
-        resultados.append(res)
-
-    if not resultados:
-        st.error("Nenhum resultado calculado. Verifique os tickers e as datas.")
-        st.stop()
-
-    cols_rank = ['Ticker', 'P0 (R$)', 'P Final (R$)', 'Mult. Corporativo',
-                 'P Final Ajustado (R$)', 'Dividendos/JCP (R$)',
-                 'Ret. Preço (%)', 'Ret. Dividendos (%)', 'TSR Total (%)']
-
-    df_rank = (pd.DataFrame([{c: r[c] for c in cols_rank} for r in resultados])
-               .sort_values('TSR Total (%)', ascending=False)
-               .reset_index(drop=True))
-    df_rank.index += 1
-    df_rank.index.name = 'Pos.'
-
-    # Gera Excel imediatamente após o cálculo
-    def _gerar_excel(res_list, rank):
+    def _gerar_excel_vol(dados_, yf_tickers_, ticker_map_, metodologias_, lam_, dt_ini_, dt_fim_):
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            rank.to_excel(writer, sheet_name='Ranking')
-            writer.sheets['Ranking'].set_column('B:J', 22)
-            for res in res_list:
-                t = res['Ticker']
-                if not res['_df_cotacoes_ini'].empty:
-                    df_ci = res['_df_cotacoes_ini'].copy()
-                    df_ci['Date'] = df_ci['Date'].dt.strftime('%d/%m/%Y')
-                    df_ci.to_excel(writer, sheet_name=f'{t}_P0', index=False)
-                    writer.sheets[f'{t}_P0'].set_column('A:I', 16)
-                if not res['_df_cotacoes_fim'].empty:
-                    df_cf = res['_df_cotacoes_fim'].copy()
-                    df_cf['Date'] = df_cf['Date'].dt.strftime('%d/%m/%Y')
-                    df_cf.to_excel(writer, sheet_name=f'{t}_PFinal', index=False)
-                    writer.sheets[f'{t}_PFinal'].set_column('A:I', 16)
-                if not res['_df_divs'].empty:
-                    res['_df_divs'].to_excel(writer, sheet_name=f'{t}_Divs', index=False)
-                    writer.sheets[f'{t}_Divs'].set_column('A:J', 18)
-                if res['_df_bonif'] is not None and not res['_df_bonif'].empty:
-                    res['_df_bonif'].to_excel(writer, sheet_name=f'{t}_Eventos', index=False)
-                    writer.sheets[f'{t}_Eventos'].set_column('A:J', 18)
-                if res['_divs_detail']:
-                    pd.DataFrame(res['_divs_detail']).to_excel(
-                        writer, sheet_name=f'{t}_DivsAdj', index=False)
-                    writer.sheets[f'{t}_DivsAdj'].set_column('A:F', 22)
+            wb = writer.book
+            fmt_pct_xl = wb.add_format({'num_format': '0.00%', 'border': 1})
+            fmt_num    = wb.add_format({'num_format': '0.000000', 'border': 1})
+            fmt_num2   = wb.add_format({'num_format': '0.00', 'border': 1})
+
+            resumo_rows = []
+            FNS_P = {
+                "Histórica (C-C)": vol_periodo_historica,
+                "Parkinson":       vol_periodo_parkinson,
+                "Garman-Klass":    vol_periodo_garman_klass,
+                "Rogers-Satchell": vol_periodo_rogers_satchell,
+            }
+            for yf_t in yf_tickers_:
+                nome = ticker_map_[yf_t]
+                try:
+                    df_full = dados_.xs(yf_t, axis=1, level=1).dropna(how='all')
+                except KeyError:
+                    continue
+                df_periodo = df_full.loc[pd.Timestamp(dt_ini_):pd.Timestamp(dt_fim_)]
+                n_total = len(df_periodo)
+                janelas = []
+                i = 1
+                while i * 252 <= n_total:
+                    janelas.append((i * 252, f"{i} ano{'s' if i > 1 else ''} ({i*252}d úteis)"))
+                    i += 1
+                if n_total % 252 != 0 and n_total > 0:
+                    janelas.append((n_total, f"Período completo ({n_total}d úteis)"))
+
+                for n_j, label in janelas:
+                    df_slice = df_periodo.iloc[-n_j:]
+                    idx_extra = max(0, len(df_periodo) - n_j - 1)
+                    df_slice_yz = df_periodo.iloc[idx_extra:]
+                    row = {"Ticker": nome, "Janela": label, "Dias Úteis": n_j}
+                    for met in metodologias_:
+                        if met == "Yang-Zhang":
+                            v = vol_periodo_yang_zhang(df_slice_yz)
+                        elif met == "EWMA":
+                            v = vol_periodo_ewma(df_slice, lam_)
+                        elif met == "GARCH(1,1)" and GARCH_DISPONIVEL:
+                            v = vol_periodo_garch(df_slice)
+                        elif met in FNS_P:
+                            v = FNS_P[met](df_slice)
+                        else:
+                            v = np.nan
+                        row[met] = v
+                    resumo_rows.append(row)
+
+                # Aba de auditoria por ticker
+                d = df_periodo.copy()
+                if hasattr(d.index, 'tz') and d.index.tz is not None:
+                    d.index = d.index.tz_localize(None)
+                lr = np.log(d['Close'] / d['Close'].shift(1))
+                audit = pd.DataFrame(index=d.index)
+                audit.index.name = 'Data'
+                audit['Open']  = d['Open']
+                audit['High']  = d['High']
+                audit['Low']   = d['Low']
+                audit['Close'] = d['Close']
+                if 'Volume' in d.columns:
+                    audit['Volume'] = d['Volume']
+                audit['ln(C/Cprev)']    = lr
+                audit['ln(C/Cprev)²']   = lr ** 2
+                audit['ln(H/L)']        = np.log(d['High'] / d['Low'])
+                audit['ln(H/L)²']       = audit['ln(H/L)'] ** 2
+                audit['Parkinson_term'] = audit['ln(H/L)²'] / (4 * np.log(2))
+                audit['ln(C/O)²']       = np.log(d['Close'] / d['Open']) ** 2
+                audit['GK_term']        = 0.5 * audit['ln(H/L)²'] - (2 * np.log(2) - 1) * audit['ln(C/O)²']
+                audit['ln(H/O)']        = np.log(d['High'] / d['Open'])
+                audit['ln(H/C)']        = np.log(d['High'] / d['Close'])
+                audit['ln(L/O)']        = np.log(d['Low']  / d['Open'])
+                audit['ln(L/C)']        = np.log(d['Low']  / d['Close'])
+                audit['RS_term']        = audit['ln(H/O)'] * audit['ln(H/C)'] + audit['ln(L/O)'] * audit['ln(L/C)']
+                audit['ln(O/Cprev)']    = np.log(d['Open'] / d['Close'].shift(1))
+                audit['ln(C/O)']        = np.log(d['Close'] / d['Open'])
+                ewma_var = (lr ** 2).ewm(alpha=1 - lam_, adjust=False).mean()
+                audit['EWMA_var']       = ewma_var
+                audit['EWMA_vol_%aa']   = np.sqrt(ewma_var * FA) * 100
+                sn = nome[:31]
+                audit.reset_index().to_excel(writer, sheet_name=sn, index=False)
+                ws = writer.sheets[sn]
+                ws.set_column('A:A', 12)
+                ws.set_column('B:F', 14, fmt_num2)
+                ws.set_column('G:Z', 14, fmt_num)
+
+            if resumo_rows:
+                df_resumo = pd.DataFrame(resumo_rows)
+                df_resumo.to_excel(writer, sheet_name='Resumo', index=False)
+                ws = writer.sheets['Resumo']
+                ws.set_column('A:B', 18)
+                ws.set_column('C:C', 12)
+                for ci in range(3, len(df_resumo.columns)):
+                    ws.set_column(ci, ci, 18, fmt_pct_xl)
+
         buf.seek(0)
         return buf
 
-    # Persiste no session_state para sobreviver ao rerun do download_button
-    st.session_state['tsr_resultados'] = resultados
-    st.session_state['tsr_df_rank']    = df_rank
-    st.session_state['tsr_excel']      = _gerar_excel(resultados, df_rank).getvalue()
-    st.session_state['tsr_nomes']      = '_'.join(tickers)
-    st.session_state['tsr_dt_fim']     = dt_pf_fim.strftime('%Y%m%d')
+    with st.spinner("Gerando Excel..."):
+        excel_bytes = _gerar_excel_vol(dados, yf_tickers, ticker_map,
+                                       metodologias, lam, dt_ini, dt_fim).getvalue()
+
+    st.session_state['vol_dados']       = dados
+    st.session_state['vol_yf_tickers']  = yf_tickers
+    st.session_state['vol_ticker_map']  = ticker_map
+    st.session_state['vol_tickers_list']= tickers_list
+    st.session_state['vol_metodologias']= metodologias
+    st.session_state['vol_janela']      = janela_chart
+    st.session_state['vol_lam']         = lam
+    st.session_state['vol_dt_ini']      = dt_ini
+    st.session_state['vol_dt_fim']      = dt_fim
+    st.session_state['vol_excel']       = excel_bytes
+    st.session_state['vol_nome_arq']    = f"volatilidade_{'_'.join(tickers_list)}_{dt_fim.strftime('%Y%m%d')}.xlsx"
 
 # ---------------------------------------------------------------------------
 # Exibição — lê do session_state (persiste após rerun do download_button)
 # ---------------------------------------------------------------------------
 
-if 'tsr_resultados' in st.session_state and st.session_state['tsr_resultados']:
-    resultados = st.session_state['tsr_resultados']
-    df_rank    = st.session_state['tsr_df_rank']
+if 'vol_dados' in st.session_state:
+    dados        = st.session_state['vol_dados']
+    yf_tickers   = st.session_state['vol_yf_tickers']
+    ticker_map   = st.session_state['vol_ticker_map']
+    tickers_list = st.session_state['vol_tickers_list']
+    metodologias = st.session_state['vol_metodologias']
+    janela_chart = st.session_state['vol_janela']
+    lam          = st.session_state['vol_lam']
+    dt_ini       = st.session_state['vol_dt_ini']
+    dt_fim       = st.session_state['vol_dt_fim']
 
-    def _color_tsr(val):
-        if isinstance(val, (int, float)):
-            color = '#1a7a1a' if val > 0 else '#b30000' if val < 0 else 'inherit'
-            return f'color: {color}; font-weight: bold'
-        return ''
-
-    st.subheader("Ranking TSR")
-    st.dataframe(
-        df_rank.style.applymap(_color_tsr, subset=['TSR Total (%)', 'Ret. Preço (%)', 'Ret. Dividendos (%)']),
-        use_container_width=True
+    tab_anos, tab_rolling, tab_corr = st.tabs(
+        ["📅 Volatilidade por Janela", "📈 Rolling", "🔗 Correlação"]
     )
 
-    st.subheader("Detalhes por Ativo")
-    for res in sorted(resultados, key=lambda x: x['TSR Total (%)'], reverse=True):
-        ticker = res['Ticker']
-        tsr    = res['TSR Total (%)']
-        icon   = "🟢" if tsr > 0 else "🔴" if tsr < 0 else "⚪"
-        with st.expander(f"{icon} {ticker}  |  TSR: {tsr:+.2f}%"):
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Preço Inicial (P0)", f"R$ {res['P0 (R$)']:.4f}")
-            c2.metric("Preço Final Ajustado", f"R$ {res['P Final Ajustado (R$)']:.4f}",
-                      delta=f"{res['Ret. Preço (%)']:+.2f}%")
-            c3.metric("Dividendos/JCP", f"R$ {res['Dividendos/JCP (R$)']:.4f}",
-                      delta=f"{res['Ret. Dividendos (%)']:+.2f}%")
-            c4.metric("TSR Total", f"{tsr:+.2f}%")
+    # -----------------------------------------------------------------------
+    # TAB 1 — Volatilidade por Ano
+    # -----------------------------------------------------------------------
+    with tab_anos:
+        st.subheader("Volatilidade Realizada por Janela (anualizada)")
+        st.caption(
+            "Cada linha usa os últimos N dias úteis contados a partir da data final. "
+            "Uso direto como input de volatilidade em Black-Scholes, Binomial e Monte Carlo."
+        )
 
-            if res['_eventos']:
-                st.markdown("**Eventos Corporativos no Período:**")
-                df_ev = pd.DataFrame(res['_eventos'])
-                df_ev['date'] = df_ev['date'].dt.strftime('%d/%m/%Y')
-                df_ev = df_ev[['date', 'label', 'factor', 'mult']].rename(columns={
-                    'date': 'Data Ex', 'label': 'Tipo', 'factor': 'Fator (API)', 'mult': 'Multiplicador'
-                })
-                st.dataframe(df_ev, use_container_width=True, hide_index=True)
+        ROLL_FNS = {
+            "Yang-Zhang": lambda df: roll_yang_zhang(df, janela_chart),
+            "EWMA":        lambda df: roll_ewma(df, lam),
+            "GARCH(1,1)":  lambda df: roll_garch(df) if GARCH_DISPONIVEL else pd.Series(np.nan, index=df.index),
+        }
+
+        for yf_t in yf_tickers:
+            nome = ticker_map[yf_t]
+            try:
+                df_full = dados.xs(yf_t, axis=1, level=1).dropna(how='all')
+            except KeyError:
+                st.warning(f"Sem dados para {nome}.")
+                continue
+
+            # Slice apenas dentro do período selecionado pelo usuário
+            df_periodo = df_full.loc[pd.Timestamp(dt_ini):pd.Timestamp(dt_fim)]
+            n_dias_total = len(df_periodo)
+
+            # Monta lista de janelas: 252, 504, 756 ... até o limite dos dados
+            janelas = []
+            i = 1
+            while i * 252 <= n_dias_total:
+                janelas.append((i * 252, f"{i} ano{'s' if i > 1 else ''} ({i * 252}d úteis)"))
+                i += 1
+            # Adiciona o período completo se não for múltiplo exato de 252
+            if n_dias_total % 252 != 0 and n_dias_total > 0:
+                janelas.append((n_dias_total, f"Período completo ({n_dias_total}d úteis)"))
+
+            if not janelas:
+                st.warning(f"Período insuficiente para {nome} (mínimo: 252 dias úteis).")
+                continue
+
+            FNS_PERIODO = {
+                "Histórica (C-C)": vol_periodo_historica,
+                "Parkinson":       vol_periodo_parkinson,
+                "Garman-Klass":    vol_periodo_garman_klass,
+                "Rogers-Satchell": vol_periodo_rogers_satchell,
+                "Yang-Zhang":      vol_periodo_yang_zhang,
+            }
+
+            rows = []
+            for n_dias_janela, label in janelas:
+                # Últimos N dias úteis dentro do período
+                df_slice = df_periodo.iloc[-n_dias_janela:]
+                # Para YZ: inclui 1 dia extra anterior para calcular o gap overnight do 1º dia
+                idx_extra = max(0, len(df_periodo) - n_dias_janela - 1)
+                df_slice_yz = df_periodo.iloc[idx_extra:]
+
+                row = {"Janela": label}
+                for met in metodologias:
+                    if met == "Yang-Zhang":
+                        row[met] = fmt_pct(vol_periodo_yang_zhang(df_slice_yz))
+                    elif met == "EWMA":
+                        row[met] = fmt_pct(vol_periodo_ewma(df_slice, lam))
+                    elif met == "GARCH(1,1)" and GARCH_DISPONIVEL:
+                        row[met] = fmt_pct(vol_periodo_garch(df_slice))
+                    elif met in FNS_PERIODO:
+                        row[met] = fmt_pct(FNS_PERIODO[met](df_slice))
+                rows.append(row)
+
+            if rows:
+                st.markdown(f"**{nome}**")
+                df_tab = pd.DataFrame(rows).set_index("Janela")
+                st.dataframe(df_tab, use_container_width=True)
             else:
-                st.info("Nenhum evento corporativo no período.")
+                st.info(f"Sem dados suficientes para {nome}.")
 
-            if res['_divs_detail']:
-                st.markdown("**Dividendos/JCP no Período:**")
-                st.dataframe(pd.DataFrame(res['_divs_detail']), use_container_width=True, hide_index=True)
-            else:
-                st.info("Nenhum dividendo/JCP no período.")
+    # -----------------------------------------------------------------------
+    # TAB 2 — Rolling
+    # -----------------------------------------------------------------------
+    with tab_rolling:
+        st.subheader(f"Volatilidade Rolling — janela {janela_chart}d (anualizada)")
 
+        CHART_FNS = {
+            "Histórica (C-C)": lambda df: roll_historica(df, janela_chart),
+            "Parkinson":       lambda df: roll_parkinson(df, janela_chart),
+            "Garman-Klass":    lambda df: roll_garman_klass(df, janela_chart),
+            "Rogers-Satchell": lambda df: roll_rogers_satchell(df, janela_chart),
+            "Yang-Zhang":      lambda df: roll_yang_zhang(df, janela_chart),
+            "EWMA":            lambda df: roll_ewma(df, lam),
+            "GARCH(1,1)":      lambda df: roll_garch(df) if GARCH_DISPONIVEL else pd.Series(np.nan, index=df.index),
+        }
+
+        dt_ini_ts = pd.Timestamp(dt_ini)
+        dt_fim_ts = pd.Timestamp(dt_fim)
+
+        for yf_t in yf_tickers:
+            nome = ticker_map[yf_t]
+            try:
+                df_full = dados.xs(yf_t, axis=1, level=1).dropna(how='all')
+            except KeyError:
+                continue
+
+            fig = go.Figure()
+            for met in metodologias:
+                serie = CHART_FNS[met](df_full)
+                serie = serie[(serie.index >= dt_ini_ts) & (serie.index <= dt_fim_ts)].dropna() * 100
+                if serie.empty:
+                    continue
+                fig.add_trace(go.Scatter(x=serie.index, y=serie.round(2), name=met, mode='lines'))
+
+            fig.update_layout(
+                title=nome,
+                yaxis_title="Volatilidade Anualizada (%)",
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                height=400,
+                margin=dict(t=60),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------------------------------------------
+    # TAB 3 — Correlação
+    # -----------------------------------------------------------------------
+    with tab_corr:
+        if len(yf_tickers) < 2:
+            st.info("Adicione ao menos 2 tickers para ver a correlação.")
+        else:
+            st.subheader("Correlação dos Log-Retornos no Período")
+            try:
+                closes = dados['Close'].copy()
+                closes.columns = [ticker_map.get(c, c) for c in closes.columns]
+                closes = closes[pd.Timestamp(dt_ini):pd.Timestamp(dt_fim)]
+                log_rets = np.log(closes / closes.shift(1)).dropna()
+                corr = log_rets.corr().round(2)
+
+                fig_corr = ff.create_annotated_heatmap(
+                    z=corr.values,
+                    x=list(corr.columns),
+                    y=list(corr.index),
+                    colorscale='RdBu',
+                    reversescale=True,
+                    zmin=-1, zmax=1,
+                    showscale=True,
+                )
+                fig_corr.update_layout(height=420)
+                st.plotly_chart(fig_corr, use_container_width=True)
+            except Exception as e:
+                st.error(f"Erro ao calcular correlação: {e}")
+
+    # -----------------------------------------------------------------------
+    # Download Excel — já gerado no momento do cálculo
+    # -----------------------------------------------------------------------
     st.markdown("---")
     st.download_button(
-        label="📥 Baixar Auditoria Excel",
-        data=st.session_state['tsr_excel'],
-        file_name=f"TSR_{st.session_state['tsr_nomes']}_{st.session_state['tsr_dt_fim']}.xlsx",
+        label="📥 Baixar Excel para Auditoria",
+        data=st.session_state['vol_excel'],
+        file_name=st.session_state['vol_nome_arq'],
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )

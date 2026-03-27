@@ -1,81 +1,100 @@
 import streamlit as st
 import pandas as pd
+import requests
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="US Treasuries", layout="wide")
-st.title("🇺🇸 T-Bonds e T-Notes (Taxas Oficiais do Tesouro)")
+st.set_page_config(page_title="Curva US Treasuries", layout="wide")
+st.title("🇺🇸 Curva de Juros (US Treasuries)")
 
-st.markdown("Consulta de dados históricos (Constant Maturity) espelhando a base oficial do US Treasury via FRED.")
+st.markdown("Consulta da curva completa de rendimentos do **US Department of the Treasury** para uma data específica.")
 
-# Tickers oficiais do FRED para as taxas do US Treasury
-TICKERS_FRED = {
-    "10-Year T-Note": "DGS10",
-    "30-Year T-Bond": "DGS30",
-    "5-Year T-Note": "DGS5",
-    "3-Month T-Bill": "DGS3MO"
+# Mapeamento de todas as tags oficiais do XML para exibição e ordenação cronológica
+TREASURY_MATURITIES = {
+    "BC_1MONTH": {"nome": "1 Mês", "ordem": 1},
+    "BC_2MONTH": {"nome": "2 Meses", "ordem": 2},
+    "BC_3MONTH": {"nome": "3 Meses", "ordem": 3},
+    "BC_4MONTH": {"nome": "4 Meses", "ordem": 4},
+    "BC_6MONTH": {"nome": "6 Meses", "ordem": 6},
+    "BC_1YEAR": {"nome": "1 Ano", "ordem": 12},
+    "BC_2YEAR": {"nome": "2 Anos", "ordem": 24},
+    "BC_3YEAR": {"nome": "3 Anos", "ordem": 36},
+    "BC_5YEAR": {"nome": "5 Anos", "ordem": 60},
+    "BC_7YEAR": {"nome": "7 Anos", "ordem": 84},
+    "BC_10YEAR": {"nome": "10 Anos", "ordem": 120},
+    "BC_20YEAR": {"nome": "20 Anos", "ordem": 240},
+    "BC_30YEAR": {"nome": "30 Anos", "ordem": 360}
 }
 
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    ativos_selecionados = st.multiselect(
-        "Selecione os Títulos:",
-        options=list(TICKERS_FRED.keys()),
-        default=["10-Year T-Note"]
-    )
+    # Por padrão, sugere o dia anterior (pois o dia atual pode ainda não ter fechado)
+    data_ref = st.date_input("Selecione a Data de Referência", datetime.now() - timedelta(days=1))
 
-with col2:
-    col_date1, col_date2 = st.columns(2)
-    with col_date1:
-        data_inicio = st.date_input("Data de Início", datetime.now() - timedelta(days=30))
-    with col_date2:
-        data_fim = st.date_input("Data de Fim", datetime.now())
-
-if st.button("Buscar Taxas Oficiais", type="primary"):
-    if not ativos_selecionados:
-        st.warning("Selecione pelo menos um título.")
-        st.stop()
-        
-    resultados = []
-    bar = st.progress(0)
+if st.button("Buscar Curva de Juros", type="primary"):
     
-    with st.spinner("Consultando dados oficiais no FRED (Federal Reserve)..."):
-        for i, ativo in enumerate(ativos_selecionados):
-            ticker_fred = TICKERS_FRED[ativo]
+    ano = data_ref.year
+    url_xml = f"https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value={ano}"
+    
+    ns = {
+        'atom': 'http://www.w3.org/2005/Atom',
+        'm': 'http://schemas.microsoft.com/ado/2007/08/dataservices/metadata',
+        'd': 'http://schemas.microsoft.com/ado/2007/08/dataservices'
+    }
+    
+    resultados = []
+    encontrou_data = False
+    
+    with st.spinner(f"Consultando dados do Tesouro Americano para {data_ref.strftime('%d/%m/%Y')}..."):
+        try:
+            response = requests.get(url_xml, verify=False, timeout=30)
+            response.raise_for_status()
             
-            try:
-                # Monta a URL direta de download do CSV do FRED filtrando pelas datas
-                url_fred = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={ticker_fred}&cosd={data_inicio.strftime('%Y-%m-%d')}&coed={data_fim.strftime('%Y-%m-%d')}"
+            root = ET.fromstring(response.content)
+            data_str_busca = data_ref.strftime("%Y-%m-%d")
+            
+            # Varre o XML procurando a data exata escolhida
+            for entry in root.findall('atom:entry', ns):
+                props = entry.find('atom:content/m:properties', ns)
                 
-                # O FRED retorna o caractere '.' para dias de feriado/sem taxa. O na_values converte isso para NaN.
-                df_fred = pd.read_csv(url_fred, parse_dates=['DATE'], na_values='.')
-                
-                # Remove as linhas com NaN (feriados e finais de semana)
-                df_fred = df_fred.dropna()
-                
-                if not df_fred.empty:
-                    df_clean = pd.DataFrame()
-                    df_clean['DATA'] = df_fred['DATE'].dt.strftime("%d/%m/%Y")
-                    df_clean['VENCIMENTO'] = ativo
-                    df_clean['TAXA_YIELD (%)'] = df_fred[ticker_fred].round(4)
+                if props is not None:
+                    data_xml = props.find('d:NEW_DATE', ns).text[:10]
                     
-                    # Link de auditoria direto para o gráfico do FRED
-                    df_clean['FONTE_AUDITORIA'] = f"https://fred.stlouisfed.org/series/{ticker_fred}"
-                    
-                    resultados.append(df_clean)
-                    
-            except Exception as e:
-                st.error(f"Erro ao buscar {ativo}: {e}")
-                
-            bar.progress((i + 1) / len(ativos_selecionados))
+                    if data_xml == data_str_busca:
+                        encontrou_data = True
+                        
+                        # Coleta todos os prazos (maturities) para a data encontrada
+                        for tag, info in TREASURY_MATURITIES.items():
+                            taxa_node = props.find(f'd:{tag}', ns)
+                            
+                            # Nem todas as datas históricas possuem todos os prazos (ex: 2 meses foi introduzido depois)
+                            if taxa_node is not None and taxa_node.text is not None:
+                                resultados.append({
+                                    "VENCIMENTO": info["nome"],
+                                    "TAXA_YIELD (%)": float(taxa_node.text),
+                                    "ORDEM": info["ordem"], # Usado apenas para ordenar internamente
+                                    "FONTE_AUDITORIA": url_xml
+                                })
+                        break # Como achou a data, não precisa continuar varrendo o XML
+                        
+        except Exception as e:
+            st.error(f"Erro ao conectar com a base do Tesouro: {e}")
 
-    if resultados:
-        df_final = pd.concat(resultados, ignore_index=True)
-        # Ordena a base decrescente por data
-        df_final = df_final.sort_values(by=['DATA', 'VENCIMENTO'], ascending=[False, True])
+    if encontrou_data and resultados:
+        df_final = pd.DataFrame(resultados)
         
-        st.success("Busca Finalizada com sucesso!")
+        # Ordena do prazo mais curto (1 Mês) para o mais longo (30 Anos)
+        df_final = df_final.sort_values(by="ORDEM").reset_index(drop=True)
+        
+        # Remove a coluna de ordenação antes de exibir
+        df_final = df_final.drop(columns=["ORDEM"])
+        
+        # Adiciona a data no formato BR como primeira coluna
+        df_final.insert(0, "DATA", data_ref.strftime("%d/%m/%Y"))
+        
+        st.success("Curva de Juros extraída com sucesso!")
         
         st.dataframe(
             df_final, 
@@ -83,8 +102,8 @@ if st.button("Buscar Taxas Oficiais", type="primary"):
             column_config={
                 "FONTE_AUDITORIA": st.column_config.LinkColumn(
                     "Link para Validação",
-                    help="Dados oficiais via Federal Reserve Economic Data (FRED).",
-                    display_text="Ver Fonte Oficial (FRED)"
+                    help="Dados extraídos diretamente do XML da curva de juros do Tesouro Americano.",
+                    display_text="Ver XML Fonte"
                 )
             }
         )
@@ -94,10 +113,10 @@ if st.button("Buscar Taxas Oficiais", type="primary"):
             df_final.to_excel(writer, index=False)
         
         st.download_button(
-            label="📥 Baixar Evidência (Excel)", 
+            label="📥 Baixar Curva (Excel)", 
             data=out.getvalue(), 
-            file_name=f"historico_treasury_oficial_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            file_name=f"curva_treasury_{data_ref.strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.warning("Nenhum dado retornado. Verifique se o intervalo de datas possui dias úteis.")
+        st.warning(f"Nenhum dado encontrado para a data {data_ref.strftime('%d/%m/%Y')}. Verifique se a data escolhida cai em um fim de semana ou feriado americano.")

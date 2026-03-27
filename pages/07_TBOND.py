@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pandas_datareader.data as web
 from io import BytesIO
 from datetime import datetime, timedelta
 
@@ -46,22 +45,22 @@ if st.button("Buscar Taxas Oficiais", type="primary"):
             ticker_fred = TICKERS_FRED[ativo]
             
             try:
-                # Busca os dados no FRED
-                df_fred = web.DataReader(ticker_fred, 'fred', data_inicio, data_fim)
+                # Monta a URL direta de download do CSV do FRED filtrando pelas datas
+                url_fred = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={ticker_fred}&cosd={data_inicio.strftime('%Y-%m-%d')}&coed={data_fim.strftime('%Y-%m-%d')}"
+                
+                # O FRED retorna o caractere '.' para dias de feriado/sem taxa. O na_values converte isso para NaN.
+                df_fred = pd.read_csv(url_fred, parse_dates=['DATE'], na_values='.')
+                
+                # Remove as linhas com NaN (feriados e finais de semana)
+                df_fred = df_fred.dropna()
                 
                 if not df_fred.empty:
-                    df = df_fred.reset_index()
-                    df = df.rename(columns={'DATE': 'Data', ticker_fred: 'Taxa'})
-                    
-                    # Remove dias sem taxa (feriados e finais de semana vêm como NaN no FRED)
-                    df = df.dropna()
-                    
                     df_clean = pd.DataFrame()
-                    df_clean['DATA'] = df['Data'].dt.strftime("%d/%m/%Y")
+                    df_clean['DATA'] = df_fred['DATE'].dt.strftime("%d/%m/%Y")
                     df_clean['VENCIMENTO'] = ativo
-                    df_clean['TAXA_YIELD (%)'] = df['Taxa'].round(4)
+                    df_clean['TAXA_YIELD (%)'] = df_fred[ticker_fred].round(4)
                     
-                    # Link de auditoria direto para o gráfico do FRED (que cita o US Treasury como fonte)
+                    # Link de auditoria direto para o gráfico do FRED
                     df_clean['FONTE_AUDITORIA'] = f"https://fred.stlouisfed.org/series/{ticker_fred}"
                     
                     resultados.append(df_clean)
@@ -73,6 +72,7 @@ if st.button("Buscar Taxas Oficiais", type="primary"):
 
     if resultados:
         df_final = pd.concat(resultados, ignore_index=True)
+        # Ordena a base decrescente por data
         df_final = df_final.sort_values(by=['DATA', 'VENCIMENTO'], ascending=[False, True])
         
         st.success("Busca Finalizada com sucesso!")
@@ -99,3 +99,5 @@ if st.button("Buscar Taxas Oficiais", type="primary"):
             file_name=f"historico_treasury_oficial_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+    else:
+        st.warning("Nenhum dado retornado. Verifique se o intervalo de datas possui dias úteis.")

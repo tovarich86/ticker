@@ -36,7 +36,12 @@ with col1:
 if st.button("Buscar Curva de Juros", type="primary"):
     
     ano = data_ref.year
+    # URL do XML usada pelo sistema para extrair os dados
     url_xml = f"https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value={ano}"
+    
+    # URL visual gerada para o usuário auditar (Formato YYYYMM)
+    mes_ano_formatado = data_ref.strftime('%Y%m')
+    url_visual = f"https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve&field_tdr_date_value_month={mes_ano_formatado}"
     
     ns = {
         'atom': 'http://www.w3.org/2005/Atom',
@@ -74,10 +79,10 @@ if st.button("Buscar Curva de Juros", type="primary"):
                                 resultados.append({
                                     "VENCIMENTO": info["nome"],
                                     "TAXA_YIELD (%)": float(taxa_node.text),
-                                    "ORDEM": info["ordem"], # Usado apenas para ordenar internamente
-                                    "FONTE_AUDITORIA": url_xml
+                                    "ORDEM": info["ordem"],
+                                    "FONTE_AUDITORIA": url_visual # <-- Agora salva o link visual na tabela
                                 })
-                        break # Como achou a data, não precisa continuar varrendo o XML
+                        break 
                         
         except Exception as e:
             st.error(f"Erro ao conectar com a base do Tesouro: {e}")
@@ -102,8 +107,8 @@ if st.button("Buscar Curva de Juros", type="primary"):
             column_config={
                 "FONTE_AUDITORIA": st.column_config.LinkColumn(
                     "Link para Validação",
-                    help="Dados extraídos diretamente do XML da curva de juros do Tesouro Americano.",
-                    display_text="Ver XML Fonte"
+                    help="Página oficial do Tesouro Americano com a tabela de taxas do mês.",
+                    display_text="Ver Tabela no Site" # <-- Texto mais amigável
                 )
             }
         )

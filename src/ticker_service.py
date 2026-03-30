@@ -394,3 +394,50 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
             erros.append(f"Erro Yahoo Intl: {e}")
 
     return resultados, erros
+
+def buscar_dividendos_yf(ticker: str, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
+    """Busca dividendos de ativos internacionais via Yahoo Finance no período [t0, t1]."""
+    try:
+        divs = yf.Ticker(ticker).dividends
+        if divs.empty:
+            return pd.DataFrame()
+        divs = divs.reset_index()
+        divs.columns = ['Date', 'value']
+        divs['Date'] = pd.to_datetime(divs['Date']).dt.tz_localize(None)
+        divs = divs[(divs['Date'] >= t0) & (divs['Date'] <= t1)].copy()
+        
+        if divs.empty:
+            return pd.DataFrame()
+            
+        divs['Ticker'] = ticker
+        divs['lastDatePriorEx'] = divs['Date'].dt.strftime('%d/%m/%Y')
+        divs['paymentDate'] = ''
+        divs['label'] = 'Dividendo (YF)'
+        divs['typeStock'] = ''
+        
+        return divs[['Ticker', 'lastDatePriorEx', 'paymentDate', 'label', 'value']]
+    except Exception as e:
+        return pd.DataFrame()
+
+def buscar_splits_yf(ticker: str, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
+    """Busca eventos de split/reverse split via Yahoo Finance no período [t0, t1]."""
+    try:
+        splits = yf.Ticker(ticker).splits
+        if splits.empty:
+            return pd.DataFrame()
+        splits = splits.reset_index()
+        splits.columns = ['Date', 'factor']
+        splits['Date'] = pd.to_datetime(splits['Date']).dt.tz_localize(None)
+        splits = splits[(splits['Date'] >= t0) & (splits['Date'] <= t1)].copy()
+        
+        if splits.empty:
+            return pd.DataFrame()
+            
+        splits['Ticker'] = ticker
+        splits['lastDatePrior'] = splits['Date'].dt.strftime('%d/%m/%Y')
+        splits['label'] = 'SPLIT (YF)'
+        
+        # Mantém factor e ratio visíveis
+        return splits[['Ticker', 'lastDatePrior', 'label', 'factor']]
+    except Exception as e:
+        return pd.DataFrame()

@@ -80,11 +80,23 @@ if btn_buscar:
         dfs_bon = []
         
         for t in tickers_list:
+            is_b3 = ticker_service.parece_b3_ticker(t)
+            t_inicio = pd.to_datetime(dt_ini)
+            t_fim = pd.to_datetime(dt_fim)
+
             if "Dividendos" in tipos_dados:
-                d = ticker_service.buscar_dividendos_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
+                if is_b3:
+                    d = ticker_service.buscar_dividendos_b3(t, df_empresas, t_inicio, t_fim)
+                else:
+                    d = ticker_service.buscar_dividendos_yf(t, t_inicio, t_fim)
                 if not d.empty: dfs_div.append(d)
+
             if "Bonificações" in tipos_dados:
-                b = ticker_service.buscar_bonificacoes_b3(t, df_empresas, pd.to_datetime(dt_ini), pd.to_datetime(dt_fim))
+                if is_b3:
+                    b = ticker_service.buscar_bonificacoes_b3(t, df_empresas, t_inicio, t_fim)
+                else:
+                    # Para ativos internacionais, assume-se "Bonificações" como Splits de ações
+                    b = ticker_service.buscar_splits_yf(t, t_inicio, t_fim)
                 if not b.empty: dfs_bon.append(b)
 
         # Exibição nas Tabs

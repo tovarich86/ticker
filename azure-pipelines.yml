@@ -1,0 +1,69 @@
+# Portal Financeiro B3/Tesouro — Azure App Service Deploy
+# Padrão idêntico ao projeto pria (mf2-ia)
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  azureServiceConnectionId: '0903325f-a8d0-49c6-8d09-9d0217b6dc0e'
+  webAppName: 'mf2-ticker'
+  vmImageName: 'ubuntu-latest'
+  environmentName: 'mf2-ticker'
+  projectRoot: $(System.DefaultWorkingDirectory)
+  pythonVersion: '3.11'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: BuildJob
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+      displayName: 'Use Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      workingDirectory: $(projectRoot)
+      displayName: 'Install requirements'
+
+    - script: |
+        git archive --format=zip --output=$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip HEAD
+      workingDirectory: $(projectRoot)
+      displayName: 'Empacotar aplicacao (git archive)'
+
+    - upload: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+      displayName: 'Upload package'
+      artifact: drop
+
+- stage: Deploy
+  displayName: 'Deploy Web App'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeploymentJob
+    pool:
+      vmImage: $(vmImageName)
+    environment: $(environmentName)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python version'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy Azure Web App: mf2-ticker'
+            inputs:
+              azureSubscription: $(azureServiceConnectionId)
+              appName: $(webAppName)
+              package: $(Pipeline.Workspace)/drop/$(Build.BuildId).zip
+              startUpCommand: 'bash startup.sh'

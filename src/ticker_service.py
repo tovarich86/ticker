@@ -58,7 +58,7 @@ def carregar_empresas(arquivo_upload=None):
     df['CODE'] = df['CODE'].astype(str).str.strip().str.upper()
     return df[(df['CODE'] != '') & (df['Nome do Pregão'] != '')]
 
-_TIPO_ACAO = {'3': 'ON', '4': 'PN', '5': 'PN', '6': 'PN', '11': 'UNT'}
+_TIPO_ACAO = {'3': 'ON', '4': 'PN', '5': 'PN', '6': 'PN', '11': 'UNT', '53': 'ON'}
 
 def get_ticker_info(ticker, df_empresas):
     """Busca informações do ticker separando código base e sufixo."""
@@ -83,12 +83,19 @@ def get_ticker_info(ticker, df_empresas):
 def parece_b3_ticker(ticker: str) -> bool:
     """Retorna True se o ticker tiver padrão B3 por formato (3-4 letras + sufixo válido).
     Não depende de df_empresas — permite encontrar tickers ausentes da API GetInitialCompanies
-    (ex: empresas em processo de cancelamento, tickers recentes, SUB3, VLID3, etc.).
+    (ex: empresas em processo de cancelamento, tickers recentes, SUB3, VLID3, AZUL53, etc.).
+    Sufixos de 1 dígito: devem estar em _TIPO_ACAO. Sufixos de 2 dígitos: aceitos se estiverem
+    em _TIPO_ACAO (ex: 11, 53) ou seguirem o padrão de reestruturações/emissões especiais da B3.
     """
     t = ticker.strip().upper()
     base = ''.join(c for c in t if not c.isdigit())
     num  = ''.join(c for c in t if c.isdigit())
-    return 3 <= len(base) <= 4 and num in _TIPO_ACAO
+    if not (3 <= len(base) <= 4) or not num:
+        return False
+    if num in _TIPO_ACAO:
+        return True
+    # Aceita sufixos de 2 dígitos não mapeados (reestruturações, emissões especiais B3)
+    return len(num) == 2
 
 def is_b3_ticker(ticker, df_empresas):
     """Retorna True se o ticker for confirmado na base de empresas da B3.

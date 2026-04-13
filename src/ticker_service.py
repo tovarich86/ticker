@@ -65,8 +65,10 @@ def get_ticker_info(ticker, df_empresas):
     if df_empresas.empty: return None
 
     ticker_upper = ticker.strip().upper()
-    ticker_base = ''.join(c for c in ticker_upper if not c.isdigit())
-    ticker_num  = ''.join(c for c in ticker_upper if c.isdigit())
+    # rstrip preserva dígitos que fazem parte do código da empresa (ex: "B3SA3" → base="B3SA", num="3")
+    # A abordagem antiga ''.join(c if not c.isdigit()) daria base="BSA" num="33" para "B3SA3"
+    ticker_base = ticker_upper.rstrip('0123456789')
+    ticker_num  = ticker_upper[len(ticker_base):]
 
     match = df_empresas[df_empresas['CODE'] == ticker_base]
     if match.empty:
@@ -102,8 +104,8 @@ def is_b3_ticker(ticker, df_empresas):
     Usado para proventos/bonificações (requer CODE). Para cotações use parece_b3_ticker().
     """
     ticker_upper = ticker.strip().upper()
-    ticker_base = ''.join(c for c in ticker_upper if not c.isdigit())
-    ticker_num  = ''.join(c for c in ticker_upper if c.isdigit())
+    ticker_base = ticker_upper.rstrip('0123456789')
+    ticker_num  = ticker_upper[len(ticker_base):]
     if ticker_num not in _TIPO_ACAO:
         return False
     return ticker_base in df_empresas['CODE'].values
@@ -189,6 +191,14 @@ def buscar_dividendos_b3(ticker, empresas_df, data_inicio, data_fim):
         return pd.DataFrame()
 
     df = pd.DataFrame(all_dividends)
+
+    # Normaliza nomes de colunas: API B3 usa 'valueCash', 'corporateAction', 'dateApproval'
+    df = df.rename(columns={
+        'valueCash': 'value',
+        'corporateAction': 'label',
+        'dateApproval': 'paymentDate',
+    })
+
     if 'typeStock' in df.columns:
         df['typeStock'] = df['typeStock'].str.strip().str.upper()
         df_filtered_type = df[df['typeStock'] == desired_type_stock].copy()
@@ -401,50 +411,3 @@ def buscar_dados_hibrido(tickers_input, dt_ini_str, dt_fim_str, empresas_df):
             erros.append(f"Erro Yahoo Intl: {e}")
 
     return resultados, erros
-
-def buscar_dividendos_yf(ticker: str, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
-    """Busca dividendos de ativos internacionais via Yahoo Finance no período [t0, t1]."""
-    try:
-        divs = yf.Ticker(ticker).dividends
-        if divs.empty:
-            return pd.DataFrame()
-        divs = divs.reset_index()
-        divs.columns = ['Date', 'value']
-        divs['Date'] = pd.to_datetime(divs['Date']).dt.tz_localize(None)
-        divs = divs[(divs['Date'] >= t0) & (divs['Date'] <= t1)].copy()
-        
-        if divs.empty:
-            return pd.DataFrame()
-            
-        divs['Ticker'] = ticker
-        divs['lastDatePriorEx'] = divs['Date'].dt.strftime('%d/%m/%Y')
-        divs['paymentDate'] = ''
-        divs['label'] = 'Dividendo (YF)'
-        divs['typeStock'] = ''
-        
-        return divs[['Ticker', 'lastDatePriorEx', 'paymentDate', 'label', 'value']]
-    except Exception as e:
-        return pd.DataFrame()
-
-def buscar_splits_yf(ticker: str, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
-    """Busca eventos de split/reverse split via Yahoo Finance no período [t0, t1]."""
-    try:
-        splits = yf.Ticker(ticker).splits
-        if splits.empty:
-            return pd.DataFrame()
-        splits = splits.reset_index()
-        splits.columns = ['Date', 'factor']
-        splits['Date'] = pd.to_datetime(splits['Date']).dt.tz_localize(None)
-        splits = splits[(splits['Date'] >= t0) & (splits['Date'] <= t1)].copy()
-        
-        if splits.empty:
-            return pd.DataFrame()
-            
-        splits['Ticker'] = ticker
-        splits['lastDatePrior'] = splits['Date'].dt.strftime('%d/%m/%Y')
-        splits['label'] = 'SPLIT (YF)'
-        
-        # Mantém factor e ratio visíveis
-        return splits[['Ticker', 'lastDatePrior', 'label', 'factor']]
-    except Exception as e:
-        return pd.DataFrame()

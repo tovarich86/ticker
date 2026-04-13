@@ -88,3 +88,168 @@ def baixar_e_parsear_dia(data_pregao, tickers_b3, session):
             pl.col('QUANTIDADE_NEGOCIADA').cast(pl.Int64).alias('Quantity'),
         ]).select(['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Average', 'Volume', 'Quantity']).to_pandas()
     except: return None
+
+
+def parsear_acoes_dia(data_pregao: datetime.date, session) -> pl.DataFrame | None:
+    """
+    Baixa e parseia um dia do COTAHIST retornando apenas ações à vista
+    (BDI 02 ou 12, TIPO_DE_MERCADO 010) com ticker, ISIN e nome da empresa.
+    Usado internamente por detectar_substituicoes_cotahist().
+
+    Returns DataFrame com colunas [ticker, isin, nome] ou None em caso de erro.
+    """
+    url = f'https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_D{data_pregao.strftime("%d%m%Y")}.ZIP'
+    try:
+        r = session.get(url, verify=False, timeout=10)
+        if r.status_code == 404:
+            return None
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            dados = z.read(z.namelist()[0])
+        df = pl.read_csv(
+            io.BytesIO(dados),
+            has_header=False,
+            new_columns=['raw'],
+            encoding='latin1',
+            separator='|',
+        )
+        # Slice off header/trailer rows (first and last)
+        df = df.slice(1, -1)
+        slices = []
+        start = 0
+        for col, width in FIELD_SIZES.items():
+            slices.append(pl.col('raw').str.slice(start, width).str.strip_chars().alias(col))
+            start += width
+        df_parsed = df.with_columns(slices).drop('raw')
+        df_acoes = df_parsed.filter(
+            (pl.col('TIPO_DE_REGISTRO') == '01') &
+            (pl.col('CODIGO_BDI').is_in(['2', '02', '12'])) &
+            (pl.col('TIPO_DE_MERCADO') == '010')
+        ).select([
+            pl.col('CODIGO_DE_NEGOCIACAO').alias('ticker'),
+            pl.col('CODIGO_ISIN').alias('isin'),
+            pl.col('NOME_DA_EMPRESA').alias('nome'),
+        ])
+        return df_acoes
+    except:
+        return None
+
+
+def detectar_substituicoes_cotahist(
+    tickers: list,
+    dt_origem: datetime.date,
+    dt_alvo: datetime.date,
+    session=None,
+) -> dict:
+    """
+    Para tickers ausentes no período alvo, detecta substitutos via COTAHIST.
+
+    Estratégia (em ordem):
+    1. ISIN matching — mesmo ISIN, novo ticker (funciona para conversões simples)
+    2. NOME exato — mesmo NOME_DA_EMPRESA (funciona para mudanças de classe: CPLE6→CPLE3)
+    3. NOME prefixo — primeiro token do nome, mínimo 4 chars, exatamente 1 match
+       (funciona para simplificações: "GRUPO NATURA" → "NATURA")
+
+    Tickers já presentes em dt_alvo não são incluídos no resultado.
+    Se nenhuma estratégia funcionar, retorna substituto=None.
+
+    Args:
+        tickers: lista de tickers a verificar (ex: IBrX-50 list)
+        dt_origem: data de amostra no período de origem (onde os tickers existiam)
+        dt_alvo: data de amostra no período alvo (onde queremos o equivalente)
+        session: requests.Session opcional (criado internamente se None)
+
+    Returns:
+        Dict somente com tickers AUSENTES em dt_alvo:
+        {
+            'ELET3': {'substituto': None,   'metodo': 'sem_match',   'nome_orig': 'ELETROBRAS', 'nome_subst': None},
+            'CPLE6': {'substituto': 'CPLE3','metodo': 'nome_exato',  'nome_orig': 'COPEL',      'nome_subst': 'COPEL'},
+            'EMBR3': {'substituto': 'EMBJ3','metodo': 'nome_exato',  'nome_orig': 'EMBRAER',    'nome_subst': 'EMBRAER'},
+        }
+    """
+    _own_session = session is None
+    if _own_session:
+        session = requests.Session()
+    try:
+        df_origem = parsear_acoes_dia(dt_origem, session)
+        df_alvo = parsear_acoes_dia(dt_alvo, session)
+        if df_origem is None or df_alvo is None:
+            return {}
+
+        tickers_alvo = set(df_alvo['ticker'].to_list())
+
+        # Build lookups from alvo DataFrame
+        isin_to_ticker_alvo: dict = {}
+        nome_to_ticker_alvo: dict = {}
+        for row in df_alvo.iter_rows(named=True):
+            isin_to_ticker_alvo[row['isin']] = row['ticker']
+            nome_to_ticker_alvo[row['nome']] = row['ticker']
+
+        # Build lookup from origem DataFrame
+        ticker_to_isin_orig: dict = {}
+        ticker_to_nome_orig: dict = {}
+        for row in df_origem.iter_rows(named=True):
+            ticker_to_isin_orig[row['ticker']] = row['isin']
+            ticker_to_nome_orig[row['ticker']] = row['nome']
+
+        result = {}
+        for ticker in tickers:
+            # Skip tickers already present in alvo
+            if ticker in tickers_alvo:
+                continue
+
+            isin_orig = ticker_to_isin_orig.get(ticker)
+            nome_orig = ticker_to_nome_orig.get(ticker)
+
+            substituto = None
+            metodo = 'sem_match'
+            nome_subst = None
+
+            # Strategy 1: ISIN matching
+            if isin_orig and isin_orig in isin_to_ticker_alvo:
+                cand = isin_to_ticker_alvo[isin_orig]
+                if cand != ticker:
+                    substituto = cand
+                    metodo = 'isin'
+                    nome_subst = ticker_to_nome_orig.get(cand) or nome_to_ticker_alvo.get(nome_orig)
+                    # Get nome_subst from alvo rows
+                    for row in df_alvo.iter_rows(named=True):
+                        if row['ticker'] == cand:
+                            nome_subst = row['nome']
+                            break
+
+            # Strategy 2: Exact NOME matching
+            if substituto is None and nome_orig and nome_orig in nome_to_ticker_alvo:
+                cand = nome_to_ticker_alvo[nome_orig]
+                if cand != ticker:
+                    substituto = cand
+                    metodo = 'nome_exato'
+                    nome_subst = nome_orig
+
+            # Strategy 3: Prefix NOME matching (first token >= 4 chars, exactly 1 match)
+            if substituto is None and nome_orig:
+                prefix = nome_orig.split()[0] if nome_orig.split() else ''
+                if len(prefix) >= 4:
+                    matches = [
+                        row['ticker']
+                        for row in df_alvo.iter_rows(named=True)
+                        if row['nome'].startswith(prefix) and row['ticker'] != ticker
+                    ]
+                    if len(matches) == 1:
+                        substituto = matches[0]
+                        metodo = 'nome_prefixo'
+                        for row in df_alvo.iter_rows(named=True):
+                            if row['ticker'] == substituto:
+                                nome_subst = row['nome']
+                                break
+
+            result[ticker] = {
+                'substituto': substituto,
+                'metodo': metodo,
+                'nome_orig': nome_orig,
+                'nome_subst': nome_subst,
+            }
+
+        return result
+    finally:
+        if _own_session:
+            session.close()

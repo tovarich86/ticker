@@ -29,14 +29,20 @@ stages:
 
     - script: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements.txt --target="$(projectRoot)/.python_packages/lib/site-packages"
       workingDirectory: $(projectRoot)
-      displayName: 'Install requirements'
+      displayName: 'Pre-instalar dependências em .python_packages'
 
     - script: |
-        git archive --format=zip --output=$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip HEAD
+        cd $(projectRoot)
+        zip -r $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip . \
+          -x "*.git*" \
+          -x "*__pycache__*" \
+          -x "*.pyc" \
+          -x "output/*" \
+          -x "bkp/*"
       workingDirectory: $(projectRoot)
-      displayName: 'Empacotar aplicacao (git archive)'
+      displayName: 'Empacotar aplicação com dependências pré-instaladas'
 
     - upload: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
       displayName: 'Upload package'

@@ -8,9 +8,9 @@ trigger:
 
 variables:
   azureServiceConnectionId: '0903325f-a8d0-49c6-8d09-9d0217b6dc0e'
-  webAppName: 'mf2-ticker'
+  webAppName: 'ticker'
   vmImageName: 'ubuntu-latest'
-  environmentName: 'mf2-ticker'
+  environmentName: 'ticker'
   projectRoot: $(System.DefaultWorkingDirectory)
   pythonVersion: '3.11'
 

@@ -1,0 +1,92 @@
+# Azure Functions — Apuração LTI (mf2-ticker-functions)
+# Deploy separado do App Service (Streamlit) — mesmo repositório.
+#
+# Pré-requisito no portal Azure:
+#   1. Criar o recurso "Function App" (Python 3.11, Linux, Consumption ou Premium)
+#   2. Em "Configuration > Application Settings" adicionar:
+#        FUNCTIONS_WORKER_RUNTIME  = python
+#        FUNCTIONS_EXTENSION_VERSION = ~4
+#   3. Pegar o nome do recurso e preencher em webAppName abaixo.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - function_app.py
+      - host.json
+      - src/lti/**
+      - src/ticker_service.py
+      - src/b3_engine.py
+      - requirements.txt
+
+variables:
+  azureServiceConnectionId: '0903325f-a8d0-49c6-8d09-9d0217b6dc0e'
+  webAppName: 'ticker-functions'          # ← nome do Function App no portal Azure
+  vmImageName: 'ubuntu-latest'
+  environmentName: 'ticker-functions'
+  projectRoot: $(System.DefaultWorkingDirectory)
+  pythonVersion: '3.11'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: BuildJob
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+      displayName: 'Use Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt --target="$(projectRoot)/.python_packages/lib/site-packages"
+      workingDirectory: $(projectRoot)
+      displayName: 'Pre-instalar dependências em .python_packages'
+
+    - script: |
+        cd $(projectRoot)
+        zip -r $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip . \
+          -x "*.git*" \
+          -x "*__pycache__*" \
+          -x "*.pyc" \
+          -x "output/*" \
+          -x "bkp/*" \
+          -x "local.settings.json" \
+          -x "startup.sh" \
+          -x "acoes.py" \
+          -x "pages/*" \
+          -x "assets/*"
+      workingDirectory: $(projectRoot)
+      displayName: 'Empacotar Function App com dependências'
+
+    - upload: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+      displayName: 'Upload package'
+      artifact: drop
+
+- stage: Deploy
+  displayName: 'Deploy Function App'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeploymentJob
+    pool:
+      vmImage: $(vmImageName)
+    environment: $(environmentName)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureFunctionApp@2
+            displayName: 'Deploy Azure Function App: ticker-functions'
+            inputs:
+              connectedServiceNameARM: $(azureServiceConnectionId)
+              appType: functionAppLinux
+              appName: $(webAppName)
+              package: $(Pipeline.Workspace)/drop/$(Build.BuildId).zip
+              deploymentMethod: zipDeploy
+              runtimeStack: 'PYTHON|3.11'

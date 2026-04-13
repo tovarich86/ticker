@@ -6,13 +6,20 @@ from base64 import b64encode
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from curl_cffi import requests as curl_requests
-import streamlit as st 
 import time
 
 # Importa o motor de baixo nível
 from src import b3_engine
 
-@st.cache_data(ttl=86400)
+# Cache condicional: usa st.cache_data quando rodando no Streamlit,
+# caso contrário aplica no-op (Azure Functions, CLI, testes).
+try:
+    import streamlit as st
+    _cache = st.cache_data(ttl=86400)
+except Exception:
+    _cache = lambda f: f  # no-op fora do Streamlit
+
+@_cache
 def carregar_empresas(arquivo_upload=None):
     """
     Carrega a base de empresas da B3 via scraping direto (sem Excel).
